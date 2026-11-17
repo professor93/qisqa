@@ -70,6 +70,7 @@ systemd_unit() {
 [Unit]
 Description=qisqa URL shortener
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/opt/qisqa/qisqa -config /opt/qisqa/config.yaml
@@ -411,8 +412,8 @@ install_system() {
 	if [ -d "$dir" ]; then
 		say "Folder: $dir is there."
 	else
-		as_root install -d -o 0 -g "$group" -m 750 "$dir"
-		say "Folder: made $dir, owned by root, group $group, mode 750."
+		as_root install -d -o 0 -g 0 -m 755 "$dir"
+		say "Folder: made $dir, owned by root, mode 755."
 	fi
 
 	binary
@@ -422,7 +423,7 @@ install_system() {
 		say "Config: keeping $dir/config.yaml."
 	else
 		config_file >"$tmp/config.yaml"
-		as_root install -o 0 -g "$group" -m 640 "$tmp/config.yaml" "$dir/config.yaml"
+		as_root install -o 0 -g 0 -m 644 "$tmp/config.yaml" "$dir/config.yaml"
 		say "Config: wrote $dir/config.yaml, which listens on 127.0.0.1:8080."
 	fi
 	if as_root test -e "$dir/data" || as_root test -L "$dir/data"; then
@@ -430,6 +431,12 @@ install_system() {
 	else
 		as_root install -d -o qisqa -g "$group" -m 700 "$dir/data"
 		say "Data: made the data folder $dir/data, for the user qisqa alone."
+	fi
+	if as_root test -e "$dir/logs" || as_root test -L "$dir/logs"; then
+		say "Logs: keeping the log folder $dir/logs."
+	else
+		as_root install -d -o qisqa -g "$group" -m 700 "$dir/logs"
+		say "Logs: made the log folder $dir/logs, for the user qisqa alone."
 	fi
 
 	service=
