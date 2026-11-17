@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
@@ -25,6 +26,203 @@ func readDoc(t *testing.T, name string) string {
 	data, err := os.ReadFile(name)
 	must(t, err)
 	return string(data)
+}
+
+// docFiles returns README.md and every page of docs/.
+func docFiles(t *testing.T) []string {
+	t.Helper()
+	pages, err := filepath.Glob("docs/*.md")
+	must(t, err)
+	return append([]string{"README.md"}, pages...)
+}
+
+// readDocs returns README.md and every page of docs/, joined.
+func readDocs(t *testing.T) string {
+	t.Helper()
+	var docs strings.Builder
+	for _, name := range docFiles(t) {
+		docs.WriteString(readDoc(t, name))
+		docs.WriteString("\n")
+	}
+	return docs.String()
+}
+
+// headingLevel returns the level of a Markdown heading line, 1 for "# ",
+// or 0 for a line that is no heading.
+func headingLevel(line string) int {
+	level := len(line) - len(strings.TrimLeft(line, "#"))
+	if level < 1 || level > 6 || !strings.HasPrefix(line[level:], " ") {
+		return 0
+	}
+	return level
+}
+
+// prose returns the lines of a Markdown document outside its fenced code
+// blocks, where a "# " starts a comment rather than a heading.
+func prose(doc string) []string {
+	var lines []string
+	fenced := false
+	for line := range strings.Lines(doc) {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+		} else if !fenced {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// section returns the part of a Markdown document under the heading line
+// heading, up to the next heading of the same or a higher level.
+func section(doc, heading string) (string, bool) {
+	level := headingLevel(heading)
+	var part strings.Builder
+	found, fenced := false, false
+	for line := range strings.Lines(doc) {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+		} else if l := headingLevel(line); !fenced && l > 0 {
+			if found && l <= level {
+				break
+			}
+			if !found && strings.TrimSpace(line) == heading {
+				found = true
+				continue
+			}
+		}
+		if found {
+			part.WriteString(line)
+		}
+	}
+	return part.String(), found
+}
+
+// githubAnchor returns the anchor GitHub gives a heading: its text in lower
+// case, each space turned into "-", punctuation dropped.
+func githubAnchor(heading string) string {
+	var anchor strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(heading)) {
+		switch {
+		case r == ' ':
+			anchor.WriteByte('-')
+		case r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r):
+			anchor.WriteRune(r)
+		}
+	}
+	return anchor.String()
+}
+
+// anchors returns the anchors of the headings of a Markdown document. A
+// heading whose anchor an earlier one has gets "-1", "-2" and so on after
+// it, as on GitHub.
+func anchors(doc string) map[string]bool {
+	found := make(map[string]bool)
+	seen := make(map[string]int)
+	for _, line := range prose(doc) {
+		level := headingLevel(line)
+		if level == 0 {
+			continue
+		}
+		anchor := githubAnchor(line[level:])
+		if n := seen[anchor]; n > 0 {
+			found[fmt.Sprintf("%s-%d", anchor, n)] = true
+		} else {
+			found[anchor] = true
+		}
+		seen[anchor]++
+	}
+	return found
+}
+
+// markdownLink is an inline link, [text](target); it captures the target.
+var markdownLink = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+
+// relativeLinks returns the targets of the links of a Markdown document that
+// lead into the repository rather than to a site, as written.
+func relativeLinks(doc string) []string {
+	var targets []string
+	for _, match := range markdownLink.FindAllStringSubmatch(strings.Join(prose(doc), ""), -1) {
+		if target := match[1]; !strings.Contains(target, "://") && !strings.HasPrefix(target, "mailto:") {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
+// TestDocLinksLeadSomewhere: every link of README.md and of the pages of
+// docs/ that leads into the repository names a file that is there, and its
+// #fragment, if it has one, a heading of that file, by the anchor GitHub
+// gives the heading.
+func TestDocLinksLeadSomewhere(t *testing.T) {
+	// The anchor rule, on headings of this repository and the anchors
+	// GitHub gave them.
+	for heading, want := range map[string]string{
+		"Create a link: `POST /api/links`":                  "create-a-link-post-apilinks",
+		"Edit a link: `PATCH /api/links/{code}`":            "edit-a-link-patch-apilinkscode",
+		"Shorten the URLs inside a text: `POST /api/links`": "shorten-the-urls-inside-a-text-post-apilinks",
+		"When a change is on disk":                          "when-a-change-is-on-disk",
+		"Accounts and domains":                              "accounts-and-domains",
+	} {
+		eq(t, githubAnchor(heading), want)
+	}
+
+	links := 0
+	for _, name := range docFiles(t) {
+		for _, target := range relativeLinks(readDoc(t, name)) {
+			links++
+			file, fragment, _ := strings.Cut(target, "#")
+			path := name
+			if file != "" {
+				path = filepath.Join(filepath.Dir(name), file)
+			}
+			if !filepath.IsLocal(path) {
+				t.Errorf("%s: the link %q leads out of the repository", name, target)
+				continue
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Errorf("%s: the link %q names %s, which is not there", name, target, path)
+				continue
+			}
+			if fragment == "" {
+				continue
+			}
+			if info.IsDir() || filepath.Ext(path) != ".md" {
+				t.Errorf("%s: the link %q has a fragment, but %s is no Markdown file", name, target, path)
+			} else if !anchors(readDoc(t, path))[fragment] {
+				t.Errorf("%s: the link %q names no heading of %s", name, target, path)
+			}
+		}
+	}
+	if links == 0 {
+		t.Error("the documents have no link into the repository: the pattern of a link is wrong")
+	}
+}
+
+// TestEveryDocPageIsListed: every page of docs/ is linked from the list of
+// pages, docs/README.md, and from the section Documentation of README.md.
+func TestEveryDocPageIsListed(t *testing.T) {
+	documentation, ok := section(readDoc(t, "README.md"), "## Documentation")
+	if !ok {
+		t.Error("README.md has no section ## Documentation")
+	}
+	pages, err := filepath.Glob("docs/*.md")
+	must(t, err)
+	for _, list := range []struct{ name, dir, doc string }{
+		{"docs/README.md", "docs", readDoc(t, "docs/README.md")},
+		{"the section Documentation of README.md", ".", documentation},
+	} {
+		linked := make(map[string]bool)
+		for _, target := range relativeLinks(list.doc) {
+			file, _, _ := strings.Cut(target, "#")
+			linked[filepath.Join(list.dir, file)] = true
+		}
+		for _, page := range pages {
+			if page != "docs/README.md" && !linked[page] {
+				t.Errorf("%s does not link to %s", list.name, page)
+			}
+		}
+	}
 }
 
 // openAPI is the part of web/openapi.yaml the tests look at.
@@ -258,107 +456,107 @@ func TestCIHasNoServices(t *testing.T) {
 	}
 }
 
-func TestReadmeCoversEndpoints(t *testing.T) {
-	readme := readDoc(t, "README.md")
+func TestDocsCoverEndpoints(t *testing.T) {
+	docs := readDocs(t)
 	for _, want := range []string{
 		"POST /api/links", "PATCH /api/links/", "DELETE /api/links/",
 		"/api/llms.txt", "/api/openapi.yaml", "/healthz",
 		"expires_after_open", "password", "config.example.yaml",
 	} {
-		if !strings.Contains(readme, want) {
-			t.Errorf("README.md does not mention %q", want)
+		if !strings.Contains(docs, want) {
+			t.Errorf("the documents do not mention %q", want)
 		}
 	}
 }
 
-// TestReadmeConfigTable checks that the README's configuration table has a
-// row for every top-level key of the example config.
-func TestReadmeConfigTable(t *testing.T) {
+// TestConfigurationTable checks that the configuration table of
+// docs/configuration.md has a row for every top-level key of the example
+// config.
+func TestConfigurationTable(t *testing.T) {
 	var keys yaml.Node
 	must(t, yaml.Unmarshal([]byte(readDoc(t, "config.example.yaml")), &keys))
-	readme := readDoc(t, "README.md")
+	page := readDoc(t, "docs/configuration.md")
 	mapping := keys.Content[0]
 	for i := 0; i < len(mapping.Content); i += 2 {
-		if key := mapping.Content[i].Value; !strings.Contains(readme, "| `"+key) {
-			t.Errorf("README.md has no configuration row for %q", key)
+		if key := mapping.Content[i].Value; !strings.Contains(page, "| `"+key) {
+			t.Errorf("docs/configuration.md has no configuration row for %q", key)
 		}
 	}
 }
 
-// TestReadmeCoversAdminCommands: every admin command is described in the
-// README, by the first two words that name it.
-func TestReadmeCoversAdminCommands(t *testing.T) {
-	readme := readDoc(t, "README.md")
+// TestDocsCoverAdminCommands: every admin command is described in the
+// documents, by the first two words that name it.
+func TestDocsCoverAdminCommands(t *testing.T) {
+	docs := readDocs(t)
 	for _, c := range adminCommands {
-		if !strings.Contains(readme, c.name()) {
-			t.Errorf("README.md does not mention the admin command %q", c.name())
+		if !strings.Contains(docs, c.name()) {
+			t.Errorf("the documents do not mention the admin command %q", c.name())
 		}
 	}
 }
 
-// TestReadmeCoversDataFolder: the README says what the data folder holds and
+// TestDocsCoverDataFolder: the documents say what the data folder holds and
 // how to run qisqa in a small container.
-func TestReadmeCoversDataFolder(t *testing.T) {
-	readme := readDoc(t, "README.md")
+func TestDocsCoverDataFolder(t *testing.T) {
+	docs := readDocs(t)
 	for _, want := range []string{"`LOCK`", "`key`", "`meta.json`", ".chunk", "`GOMEMLIMIT`"} {
-		if !strings.Contains(readme, want) {
-			t.Errorf("README.md does not mention %s", want)
+		if !strings.Contains(docs, want) {
+			t.Errorf("the documents do not mention %s", want)
 		}
 	}
 }
 
-// TestReadmeCoversSyncEvery: the README says what each setting of
+// TestDocsCoverSyncEvery: the documents say what each setting of
 // sync_every answers after, what can be lost and when, that codes are never
 // handed out twice, and the numbers a stop that was not in order passes
 // over; and what an interval adds when the disk fails.
-func TestReadmeCoversSyncEvery(t *testing.T) {
-	readme := readDoc(t, "README.md")
-	_, section, ok := strings.Cut(readme, "### When a change is on disk")
-	section, _, _ = strings.Cut(section, "\n## ")
+func TestDocsCoverSyncEvery(t *testing.T) {
+	docs := readDocs(t)
+	part, ok := section(docs, "## When a change is on disk")
 	if !ok {
-		t.Fatal("README.md has no section ### When a change is on disk")
+		t.Fatal("the documents have no section ## When a change is on disk")
 	}
-	section = strings.Join(strings.Fields(section), " ")
+	part = strings.Join(strings.Fields(part), " ")
 	for _, want := range []string{
 		"`sync_every: 0`", "once the change is synced", "Nothing it answered is lost",
 		"`100ms` to `1m`", "answers at once", "loses power", "the changes of the last interval can be lost",
 		"never handed out twice", strconv.Itoa(reserveAhead/1000) + "," + fmt.Sprintf("%03d", reserveAhead%1000),
 		"stop in order", "loses nothing",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("README.md's section on sync_every does not say %q", want)
+		if !strings.Contains(part, want) {
+			t.Errorf("the section on sync_every does not say %q", want)
 		}
 	}
-	_, disk, _ := strings.Cut(readme, "**When the disk fails.**")
+	_, disk, _ := strings.Cut(docs, "**When the disk fails.**")
 	disk, _, _ = strings.Cut(disk, "\n- **")
 	disk = strings.Join(strings.Fields(disk), " ")
 	for _, want := range []string{"`sync_every`", "may not be on disk", "`since_last_good_sync`"} {
 		if !strings.Contains(disk, want) {
-			t.Errorf("README.md's bullet on a failing disk does not say %q", want)
+			t.Errorf("the bullet on a failing disk does not say %q", want)
 		}
 	}
 }
 
-// TestReadmeCoversRestore: the README says how to put a copy of the data
-// folder back with -skip, and its command for the compose file keeps the
+// TestDocsCoverRestore: the documents say how to put a copy of the data
+// folder back with -skip, and their command for the compose file keeps the
 // flags of the image's CMD, which the words after the service name replace.
-func TestReadmeCoversRestore(t *testing.T) {
-	readme := readDoc(t, "README.md")
+func TestDocsCoverRestore(t *testing.T) {
+	docs := readDocs(t)
 	for _, want := range []string{"-skip", "`skipped`"} {
-		if !strings.Contains(readme, want) {
-			t.Errorf("README.md does not mention %s", want)
+		if !strings.Contains(docs, want) {
+			t.Errorf("the documents do not mention %s", want)
 		}
 	}
 	// A code turned down for a word in it uses a number too, so a count of
 	// the links made since the copy is too small for N.
-	_, restore, ok := strings.Cut(readme, "**Restoring a copy.**")
+	_, restore, ok := strings.Cut(docs, "**Restoring a copy.**")
 	restore, _, _ = strings.Cut(restore, "\n- **")
 	if !ok {
-		t.Error("README.md has no bullet **Restoring a copy.**")
+		t.Error("the documents have no bullet **Restoring a copy.**")
 	}
 	for _, want := range []string{"`N` counts numbers", "turned down", "add a tenth"} {
 		if !strings.Contains(strings.Join(strings.Fields(restore), " "), want) {
-			t.Errorf("README.md's bullet on restoring a copy does not say %q", want)
+			t.Errorf("the bullet on restoring a copy does not say %q", want)
 		}
 	}
 
@@ -372,16 +570,16 @@ func TestReadmeCoversRestore(t *testing.T) {
 		t.Fatal("the Dockerfile has no CMD in the form of a JSON list")
 	}
 	var command string
-	for line := range strings.Lines(readme) {
+	for line := range strings.Lines(docs) {
 		if strings.Contains(line, "docker compose run") && strings.Contains(line, "-skip") {
 			command = strings.TrimSpace(line)
 		}
 	}
 	switch {
 	case command == "":
-		t.Error("README.md gives no docker compose run command with -skip")
+		t.Error("the documents give no docker compose run command with -skip")
 	case !strings.Contains(command, " app "+strings.Join(cmd, " ")+" -skip "):
-		t.Errorf("README.md's %q drops the image's CMD %q", command, cmd)
+		t.Errorf("the documents' %q drops the image's CMD %q", command, cmd)
 	}
 }
 

@@ -29,7 +29,7 @@ data_dir: ./data
 # burst of creates does not wait for the disk. A power loss, a system crash
 # or a failing disk can then lose the changes of the last interval; a stop
 # or a crash of qisqa alone loses nothing. Codes are never handed out twice
-# either way. The README says more under "When a change is on disk".
+# either way: see "When a change is on disk" in docs/data-folder.md.
 # [restart]
 sync_every: 0
 
@@ -68,7 +68,7 @@ not_found_limit:
 # Logs, each in one file per UTC day in dir: access-2026-11-14.log (every
 # created, edited, deleted or opened link), admin-2026-11-14.log (every
 # admin command) and error-2026-11-14.log (warnings and errors). One
-# tab-separated line per event; the README lists the columns. A file stays
+# tab-separated line per event; docs/logs.md lists the columns. A file stays
 # as text for plain_days days, then is kept compressed (.log.gz, read it
 # with gzip -dc) for archive_days days, then is removed. archive_days: 0
 # keeps no archive. In the container image, set dir to a folder in the
