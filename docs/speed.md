@@ -25,7 +25,7 @@ connections only the one cached link got faster, to 338,909 a second with
 most 32 MiB with 32 of them. The links were created from the laptop
 itself, through the published port.
 
-The store's own benchmarks, in `store_bench_test.go`, ran in the same
+The store's own benchmarks, in `internal/app/store_bench_test.go`, ran in the same
 Linux virtual machine, without its CPU or memory limited, with the data on
 its disk. A lookup of a random link in a store of 2,000,000 links runs
 466,000 times a second on one goroutine and 2,061,000 times on 8; in a
@@ -45,5 +45,5 @@ one writer runs 250,201 creates a second, and 64 writers 206,992. A link
 to a 47-byte URL takes 49 bytes of disk, there and on the laptop itself:
 its 16-byte slot and a 33-byte record, with the host in the file's table.
 The benchmarks run with
-`go test -run '^$' -bench . -benchtime 5s`; `QISQA_BENCH_LARGE=1` adds the
+`go test -run '^$' -bench . -benchtime 5s ./internal/app`; `QISQA_BENCH_LARGE=1` adds the
 store of 20,000,000 links.
