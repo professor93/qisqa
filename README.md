@@ -140,8 +140,8 @@ The rest is in the folder [`docs`](docs/README.md), in this order:
   links, password links and text mode.
 - [Logs](docs/logs.md): the service log, and the columns of the access,
   admin and error logs.
-- [Running qisqa](docs/running.md): running it as a service under
-  Supervisor, the health check, and small servers.
+- [Running qisqa](docs/running.md): running it as a service under systemd,
+  Supervisor, OpenRC or launchd, the health check, and small servers.
 - [Behind nginx](docs/nginx.md): nginx in front of qisqa, for HTTPS.
 - [Docker](docs/docker.md): the image and the compose file.
 - [Speed](docs/speed.md): what qisqa did on a laptop and in a small
