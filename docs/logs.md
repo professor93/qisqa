@@ -49,5 +49,3 @@ only by the user it runs as. Keep the folder writable by that user alone.
 With the logs on, qisqa does not start when it cannot write to `log.dir`,
 nor when every user of the machine may write to it, and warns when its
 group may, as for the [data folder](data-folder.md).
-Files of the earlier single log, `qisqa-<date>.log`, are left alone: delete
-them by hand.

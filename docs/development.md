@@ -11,10 +11,11 @@ make build    # builds ./qisqa
 The tests need no other service; each works in folders of its own, so they
 leave nothing behind.
 
-The code is one Go package with one small file per job, and two
-dependencies: a YAML parser, and the IDNA tables of `golang.org/x/net`
-(with the `golang.org/x/text` tables they need) that turn a target host
-with letters outside ASCII into its `xn--` form.
+The code is one Go package, `internal/app`, with one small file per job,
+and a `main.go` at the root that only starts it. It has two dependencies: a
+YAML parser, and the IDNA tables of `golang.org/x/net` (with the
+`golang.org/x/text` tables they need) that turn a target host with letters
+outside ASCII into its `xn--` form.
 
 ## Making a release
 

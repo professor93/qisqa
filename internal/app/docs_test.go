@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -231,40 +232,36 @@ func codeBlocks(doc string) []string {
 	return blocks
 }
 
-// heredoc returns the text of the here-document of a shell script that is
-// opened with <<'name' and closed by a line that is name alone.
-func heredoc(script, name string) (string, bool) {
-	var text strings.Builder
-	inside := false
-	for line := range strings.Lines(script) {
-		switch {
-		case !inside && strings.HasSuffix(strings.TrimRight(line, "\n"), "<<'"+name+"'"):
-			inside = true
-		case inside && strings.TrimRight(line, "\n") == name:
-			return text.String(), true
-		case inside:
-			text.WriteString(line)
-		}
+// installerPrints runs install.sh through sh with its last command,
+// main "$@", replaced by the shell code call, and returns what that prints.
+func installerPrints(t *testing.T, call string) string {
+	t.Helper()
+	body, ok := strings.CutSuffix(readDoc(t, "install.sh"), "main \"$@\"\n}\n")
+	if !ok {
+		t.Fatal(`install.sh does not end with the lines main "$@" and }`)
 	}
-	return "", false
+	cmd := exec.Command("sh", "-s")
+	cmd.Stdin = strings.NewReader(body + call + "\n}\n")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("sh, for %q: %v\n%s", call, err, stderr.String())
+	}
+	return string(out)
 }
 
 // TestInstallerServiceFilesMatchTheDocs: the systemd unit and the OpenRC
-// script that install.sh writes are, before it puts in another folder than
-// /opt/qisqa, the text that docs/running.md shows, so that the page and the
-// installer describe one layout.
+// script that install.sh writes for the folder /opt/qisqa are the text that
+// docs/running.md shows, and for another folder the same text with that
+// folder in place of /opt/qisqa, so that the page and the installer
+// describe one layout.
 func TestInstallerServiceFilesMatchTheDocs(t *testing.T) {
-	script := readDoc(t, "install.sh")
 	blocks := codeBlocks(readDoc(t, "docs/running.md"))
-	for _, file := range []struct{ name, start string }{
-		{"UNIT", "[Unit]\n"},
-		{"INIT", "#!/sbin/openrc-run\n"},
+	for _, file := range []struct{ function, start string }{
+		{"systemd_unit", "[Unit]\n"},
+		{"openrc_script", "#!/sbin/openrc-run\n"},
 	} {
-		carried, ok := heredoc(script, file.name)
-		if !ok {
-			t.Errorf("install.sh has no here-document <<'%s'", file.name)
-			continue
-		}
 		var shown []string
 		for _, block := range blocks {
 			if strings.HasPrefix(block, file.start) {
@@ -275,27 +272,113 @@ func TestInstallerServiceFilesMatchTheDocs(t *testing.T) {
 			t.Errorf("docs/running.md has %d code blocks that start with %q, want 1", len(shown), file.start)
 			continue
 		}
-		if carried != shown[0] {
-			t.Errorf("install.sh's <<'%s' differs from the code block of docs/running.md:\n--- install.sh\n%s--- docs/running.md\n%s", file.name, carried, shown[0])
+		for _, dir := range []string{"/opt/qisqa", "/srv/apps/qisqa"} {
+			want := strings.ReplaceAll(shown[0], "/opt/qisqa", dir)
+			if written := installerPrints(t, "dir="+dir+"; "+file.function); written != want {
+				t.Errorf("install.sh's %s for %s differs from the code block of docs/running.md:\n--- install.sh\n%s--- docs/running.md\n%s", file.function, dir, written, want)
+			}
 		}
 	}
 }
 
-// TestReadmeNamesTheInstaller: the Quick start begins with the command that
-// runs install.sh from the main branch of this repository.
+// TestInstallerMakesTheLayoutOfTheDocs: the folder, config.yaml, data and
+// logs get the same owners and modes from install.sh as from the two blocks
+// of commands of docs/running.md that make them.
+func TestInstallerMakesTheLayoutOfTheDocs(t *testing.T) {
+	want := map[string]string{
+		"/opt/qisqa":             "root root 755",
+		"/opt/qisqa/config.yaml": "root root 644",
+		"/opt/qisqa/data":        "qisqa qisqa 700",
+		"/opt/qisqa/logs":        "qisqa qisqa 700",
+	}
+	check := func(where string, got map[string]string) {
+		t.Helper()
+		for path, mode := range want {
+			if got[path] != mode {
+				t.Errorf("%s makes %s with %q, want owner, group and mode %q", where, path, got[path], mode)
+			}
+		}
+	}
+
+	// install -d -o root -g root -m 755 /opt/qisqa, and a file into a folder:
+	// install -o root -g root -m 644 config.yaml /opt/qisqa/
+	pageLine := regexp.MustCompile(`(?m)^(?:sudo )?install (?:-d )?-o (\S+) -g (\S+) -m (\d+) (?:(\S+) )?(/opt/qisqa\S*)$`)
+	made := 0
+	for _, block := range codeBlocks(readDoc(t, "docs/running.md")) {
+		if !strings.Contains(block, "install -d ") {
+			continue
+		}
+		made++
+		got := make(map[string]string)
+		for _, m := range pageLine.FindAllStringSubmatch(block, -1) {
+			path := m[5]
+			if strings.HasSuffix(path, "/") {
+				path += m[4]
+			}
+			got[path] = m[1] + " " + m[2] + " " + m[3]
+		}
+		check(fmt.Sprintf("the code block %d of docs/running.md that makes folders", made), got)
+	}
+	if made != 2 {
+		t.Errorf("docs/running.md has %d code blocks that make folders, want 2: for systemd and for OpenRC", made)
+	}
+
+	// The script's owners are 0 for root and "$group", the group of the user
+	// qisqa, which is qisqa when the script makes that user.
+	name := func(owner string) string {
+		switch owner {
+		case "0":
+			return "root"
+		case `"$group"`:
+			return "qisqa"
+		}
+		return owner
+	}
+	script := readDoc(t, "install.sh")
+	got := make(map[string]string)
+	for _, m := range regexp.MustCompile(`(?m)\binstall -d -o (\S+) -g (\S+) -m (\d+) "\$dir(/\w+)?"$`).FindAllStringSubmatch(script, -1) {
+		got["/opt/qisqa"+m[4]] = name(m[1]) + " " + name(m[2]) + " " + m[3]
+	}
+	owner := regexp.MustCompile(`(?m)\bchown (\S+):(\S+) "\$dir/config\.yaml"$`).FindStringSubmatch(script)
+	mode := regexp.MustCompile(`(?m)\bchmod (\d+) "\$dir/config\.yaml"$`).FindStringSubmatch(script)
+	if owner != nil && mode != nil {
+		got["/opt/qisqa/config.yaml"] = name(owner[1]) + " " + name(owner[2]) + " " + mode[1]
+	}
+	check("install.sh", got)
+}
+
+// TestReadmeNamesTheInstaller: the first code block of the Quick start is
+// the command that runs install.sh from the main branch of this repository,
+// and every address of raw.githubusercontent.com in the documents and in
+// the script is that of the same file.
 func TestReadmeNamesTheInstaller(t *testing.T) {
 	module, _, _ := strings.Cut(strings.TrimPrefix(readDoc(t, "go.mod"), "module "), "\n")
 	repository, ok := strings.CutPrefix(module, "github.com/")
 	if !ok {
 		t.Fatalf("the module %q is not on github.com", module)
 	}
-	command := "curl -fsSL https://raw.githubusercontent.com/" + repository + "/main/install.sh | sh"
+	address := "https://raw.githubusercontent.com/" + repository + "/main/install.sh"
+	command := "curl -fsSL " + address + " | sh\n"
 	quickStart, ok := section(readDoc(t, "README.md"), "## Quick start")
 	if !ok {
 		t.Fatal("README.md has no section ## Quick start")
 	}
-	if !strings.Contains(quickStart, command) {
-		t.Errorf("the Quick start does not give the command %q", command)
+	if blocks := codeBlocks(quickStart); len(blocks) == 0 || blocks[0] != command {
+		t.Errorf("the first code block of the Quick start is not the command %q", command)
+	}
+
+	raw := regexp.MustCompile("https?://raw\\.githubusercontent\\.com/[^\\s)`'\"]*")
+	found := 0
+	for _, name := range append(docFiles(t), "install.sh") {
+		for _, got := range raw.FindAllString(readDoc(t, name), -1) {
+			found++
+			if got != address {
+				t.Errorf("%s names %s, want %s", name, got, address)
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("no address of raw.githubusercontent.com was found: the pattern is wrong")
 	}
 	if _, err := fs.Stat(repo, "install.sh"); err != nil {
 		t.Errorf("the command runs install.sh, which is not there: %v", err)

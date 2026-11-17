@@ -127,15 +127,15 @@ by another qisqa process`.
   progress and stops with status 1, instead of going on with data it cannot
   trust. The one exception is the sync of a new chunk file, which holds no
   link yet: when it fails, only the request that created the file fails,
-  and qisqa goes on.
-  With `sync_every` set the line also says that the changes answered
-  since the last good sync may not be on disk, and `since_last_good_sync`
-  says how long before the failure that sync began, or qisqa started if no
-  sync had succeeded yet: those changes may be lost. Run qisqa under
-  something that starts it again, as the [compose file](docker.md) and the
-  [service examples](running.md#running-as-a-service) do, and it goes on from
-  what is on disk. A disk that keeps failing shows as a qisqa that keeps
-  restarting.
+  and qisqa goes on. With `sync_every` set the line also says
+  that the changes answered since the last good sync may not be
+  on disk, and `since_last_good_sync` says how long before the
+  failure that sync began, or qisqa started if no sync had succeeded
+  yet: those changes may be lost. Run qisqa under something that
+  starts it again, as the [compose file](docker.md) and the
+  [service examples](running.md#running-as-a-service) do, and it goes on
+  from what is on disk. A disk that keeps failing shows as a qisqa that
+  keeps restarting.
 - **Damaged files.** Every link is checked when it is read: a damaged one
   leads nowhere, rather than somewhere else, and is logged. A chunk file
   that is damaged as a whole is logged as `a chunk file is damaged and its
@@ -177,11 +177,10 @@ there. The codes of the links lost answer as codes nobody was given. A lost
 link whose slot reached the disk without its record, or whose slot and
 record reached it without the line of its host in the file's table of
 hosts, answers as expired links do instead, and each lookup of its code
-logs `a link is damaged and leads
-nowhere`. A stop in order writes the exact number, so no number is wasted
-then. A stop that was not in order passes over up to 4,096 numbers of each
-code length of each domain that had new links: it costs numbers only, no
-disk space. In either mode, a power loss in the moment a new chunk file is
-being created, before any of its links is answered, passes over the rest of
-that chunk's 65,536 numbers instead, and the next start logs that the file
-is lost.
+logs `a link is damaged and leads nowhere`. A stop in order writes the exact
+number, so no number is wasted then. A stop that was not in order passes
+over up to 4,096 numbers of each code length of each domain that had new
+links: it costs numbers only, no disk space. In either mode, a power loss
+in the moment a new chunk file is being created, before any of its links is
+answered, passes over the rest of that chunk's 65,536 numbers instead, and
+the next start logs that the file is lost.
