@@ -34,8 +34,10 @@ anything when the two differ. Then:
   writes the unit of that example, enables the service and starts it;
   where there is no systemd but `rc-service` is there, the script of the
   [OpenRC](#openrc) example, likewise. It then waits up to 10 seconds for
-  `/healthz`, and fails if qisqa does not answer. Where there is neither,
-  it makes no service and says how to start qisqa by hand.
+  `/healthz`, and fails if qisqa does not answer, or if something else,
+  such as a qisqa started by hand, answers on its address instead of the
+  service. Where there is neither, it makes no service and says how to
+  start qisqa by hand.
 - **On macOS, with `--user`, or without root**, it installs for the
   current user into `~/qisqa`, mode 700: the binary, the documents and the
   same `config.yaml`, and no service. A missing tool is then an error.
@@ -44,10 +46,11 @@ Its last lines give the version, where the config is, and the commands
 that add a domain and an account, in the form for that install. It writes
 `config.yaml` only where there is none: a second run installs the binary
 and the documents again, keeps `config.yaml` and the data folder as they
-are, and restarts the service. It does not install into a folder that is
-there and holds other files but no `qisqa`, and a system install uses a
-folder that is there only when root owns it and nobody else may write to
-it.
+are, and restarts the service. A folder that is there may hold a
+`config.yaml`, `data` and `logs` made before the first run, which are
+kept; the script does not install into one that holds other files but no
+`qisqa`, and a system install uses a folder that is there only when root
+owns it and nobody else may write to it.
 
 | Option | Meaning |
 |---|---|

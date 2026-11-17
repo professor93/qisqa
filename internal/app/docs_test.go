@@ -347,6 +347,75 @@ func TestInstallerMakesTheLayoutOfTheDocs(t *testing.T) {
 	check("install.sh", got)
 }
 
+// TestInstallerChecksTheFolder: install.sh takes a folder that is absent,
+// empty, holds a qisqa already, or holds only what qisqa itself keeps there
+// (config.yaml, data, logs, the binary of a run cut short), and refuses one
+// that holds anything else and no qisqa.
+func TestInstallerChecksTheFolder(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{"an empty folder", nil, "accepted"},
+		{"a config made before the first run", []string{"config.yaml"}, "accepted"},
+		{"a config, data and logs", []string{"config.yaml", "data/", "logs/"}, "accepted"},
+		{"the binary of a run cut short", []string{".qisqa.new"}, "accepted"},
+		{"an install that is there", []string{"qisqa", "notes.txt", "config.yaml"}, "accepted"},
+		{"a file of something else", []string{"README.md"}, "refused"},
+		{"a config and a file of something else", []string{"config.yaml", "notes.txt"}, "refused"},
+	} {
+		dir := t.TempDir()
+		for _, file := range c.files {
+			path := filepath.Join(dir, file)
+			var err error
+			if strings.HasSuffix(file, "/") {
+				err = os.Mkdir(path, 0o700)
+			} else {
+				err = os.WriteFile(path, []byte("x\n"), 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		call := "sudo=; dir='" + dir + "'; if (check_folder) 2>/dev/null; then echo accepted; else echo refused; fi"
+		if got := strings.TrimSpace(installerPrints(t, call)); got != c.want {
+			t.Errorf("%s: install.sh's check_folder says %q, want %q", c.name, got, c.want)
+		}
+	}
+	absent := filepath.Join(t.TempDir(), "absent")
+	call := "sudo=; dir='" + absent + "'; if (check_folder) 2>/dev/null; then echo accepted; else echo refused; fi"
+	if got := strings.TrimSpace(installerPrints(t, call)); got != "accepted" {
+		t.Errorf("a folder that is not there: install.sh's check_folder says %q, want %q", got, "accepted")
+	}
+}
+
+// TestInstallerChecksTheAddressUnderOpenRC: OpenRC does not say which
+// process answers on qisqa's address, so install.sh stops the service, fails
+// if something still answers there, and only then starts the service.
+func TestInstallerChecksTheAddressUnderOpenRC(t *testing.T) {
+	script := readDoc(t, "install.sh")
+	last := -1
+	for _, step := range []string{
+		"rc-service qisqa stop ",
+		"\t\thealth_url\n\t\tif answers; then\n\t\t\tdie \"something else already answers on $url",
+		"rc-service qisqa start ",
+	} {
+		if n := strings.Count(script, step); n != 1 {
+			t.Errorf("install.sh has %q %d times, want once", step, n)
+			continue
+		}
+		at := strings.Index(script, step)
+		if at < last {
+			t.Errorf("install.sh has %q before the step that must come before it", step)
+		}
+		last = at
+	}
+	if strings.Contains(script, "rc-service qisqa restart") {
+		t.Error("install.sh restarts the OpenRC service, which skips the check of the address")
+	}
+}
+
 // TestReadmeNamesTheInstaller: the first code block of the Quick start is
 // the command that runs install.sh from the main branch of this repository,
 // and every address of raw.githubusercontent.com in the documents and in

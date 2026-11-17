@@ -229,10 +229,12 @@ find_rights() {
 
 # check_folder refuses a folder that is there, holds other files and no
 # qisqa: the script would put its own among them, and over those of the same
-# name. A .qisqa.new alone is what a run that stopped at the binary leaves.
+# name. A config.yaml, data and logs made before the first run are qisqa's
+# own, and are kept; a .qisqa.new is what a run that stopped at the binary
+# leaves.
 check_folder() {
 	if as_root test -d "$dir" && ! as_root test -f "$dir/qisqa" &&
-		as_root ls -A "$dir" </dev/null | grep -qv '^\.qisqa\.new$'; then
+		as_root ls -A "$dir" </dev/null | grep -qvE '^(\.qisqa\.new|config\.yaml|data|logs)$'; then
 		die "$dir is there and holds other files but no qisqa; the script does not install into it"
 	fi
 }
@@ -490,7 +492,15 @@ install_system() {
 		openrc_script >"$tmp/qisqa.init"
 		as_root install -o 0 -g 0 -m 755 "$tmp/qisqa.init" /etc/init.d/qisqa
 		as_root rc-update add qisqa default </dev/null >/dev/null || die "rc-update add qisqa default failed"
-		as_root rc-service qisqa restart </dev/null >/dev/null || die "qisqa did not start; its output: /var/log/qisqa.log"
+		# OpenRC does not say which process answers: with the service
+		# stopped, nothing may answer on qisqa's address, or a qisqa started
+		# by hand would pass for the service.
+		as_root rc-service qisqa stop </dev/null >/dev/null 2>&1 || true
+		health_url
+		if answers; then
+			die "something else already answers on $url; stop it first (a qisqa started by hand?), then run the script again"
+		fi
+		as_root rc-service qisqa start </dev/null >/dev/null || die "qisqa did not start; its output: /var/log/qisqa.log"
 		say "Service: wrote /etc/init.d/qisqa, added it to the default runlevel and (re)started it."
 		service=openrc output=/var/log/qisqa.log
 	else
@@ -501,9 +511,8 @@ install_system() {
 	fi
 }
 
-# wait_for_health waits up to 10 seconds for qisqa's answer on /healthz of
-# the address that the config gives.
-wait_for_health() {
+# health_url sets url to /healthz on the address that the config gives.
+health_url() {
 	address=$(as_root sed -n 's/^listen:[[:space:]]*//p' "$dir/config.yaml" |
 		sed 's/[[:space:]]#.*//' | tr -d "\"' " | head -n 1)
 	address=${address:-:8080}
@@ -513,6 +522,11 @@ wait_for_health() {
 	"[::]:"*) address="[::1]:${address#"[::]:"}" ;;
 	esac
 	url=http://$address/healthz
+}
+
+# wait_for_health waits up to 10 seconds for qisqa's answer on /healthz.
+wait_for_health() {
+	health_url
 	tries=0 pid='' since=0
 	while :; do
 		if answers; then
