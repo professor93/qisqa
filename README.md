@@ -161,8 +161,9 @@ it was measured, and the store's own benchmarks.
 ## Releases
 
 Every release comes with ready-to-run binaries for Linux and macOS, each for
-`amd64` and `arm64`. An archive holds the binary, this README, the license
-and `config.example.yaml`; `checksums.txt` lists the SHA-256 of every archive.
+`amd64` and `arm64`. An archive holds the binary, this README and the
+folder `docs`, the license and `config.example.yaml`; `checksums.txt` lists
+the SHA-256 of every archive.
 
 Download the archive for your system from the
 [releases page](https://github.com/professor93/qisqa/releases) and unpack it:
