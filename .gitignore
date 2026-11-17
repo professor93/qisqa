@@ -1,0 +1,13 @@
+# Local configuration.
+config.yaml
+.env
+
+# Build output.
+/qisqa
+/dist/
+
+# Runtime files: the data folder and the logs.
+/data/
+/logs/
+
+.DS_Store

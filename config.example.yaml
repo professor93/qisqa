@@ -1,0 +1,86 @@
+# qisqa configuration. Copy to config.yaml and edit.
+#
+# The file is checked every 5 seconds, and a change applies without a
+# restart, except for the keys marked [restart], which are read only at
+# startup. A broken file is ignored and the running config stays.
+#
+# The short domains, the accounts and their tokens, the aliases and the
+# blocked hosts are not set here: they are kept in the data folder and
+# managed with admin commands, such as "qisqa domain add short.example".
+#
+# Durations are written as 30s, 15m, 12h or 10d, at most 36500d. A relative
+# path is taken from the folder qisqa was started in.
+
+# Address the HTTP server listens on. [restart]
+listen: ":8080"
+
+# The data folder: the links, and the accounts and domains that own them
+# (meta.json). It is created if it does not exist. Back it up as a whole,
+# key and meta.json with the links, and keep it private. Its path must be
+# short: the admin socket, <data_dir>/qisqa.sock, may be at most about 100
+# bytes long. In the container image, ./data is the volume at /data.
+# [restart]
+data_dir: ./data
+
+# When a change to a link (a create, an edit, a delete, the first open of a
+# secured link) is answered. 0: once it is synced to disk, so that nothing
+# answered is lost, whatever happens to the machine. An interval from 100ms
+# to 1m, such as 1s: at once, and synced within that interval, so that a
+# burst of creates does not wait for the disk. A power loss, a system crash
+# or a failing disk can then lose the changes of the last interval; a stop
+# or a crash of qisqa alone loses nothing. Codes are never handed out twice
+# either way. The README says more under "When a change is on disk".
+# [restart]
+sync_every: 0
+
+# Length of new codes: 3 to 10 (1 and 2 are treated as 3). When a length
+# fills up, longer codes are used automatically.
+min_length: 5
+
+# Lifetime of a link when the request gives no "expires_in".
+default_ttl: 10d
+
+# Shape of the short URL in API responses:
+#   https      https://short.example/aB3xK
+#   https_www  https://www.short.example/aB3xK
+#   bare       short.example/aB3xK
+#   www        www.short.example/aB3xK
+short_url_format: https
+
+# Where to send requests for unknown hosts, and for unknown or expired codes
+# on a domain without a fallback URL of its own. Empty: show a 404 page.
+fallback_url: ""
+
+# In-memory cache of links that were created or opened. [restart]
+cache:
+  ttl: 6h             # how long a link stays cached
+  max_entries: 10000  # most recently used links kept in memory
+
+# Protection against guessing codes. An IP that asks for more than
+# per_minute codes that do not exist is blocked for block_for.
+not_found_limit:
+  per_minute: 30
+  block_for: 5m
+  # Behind a reverse proxy, the header that carries the client IP,
+  # for example X-Real-IP. Empty: use the connection address.
+  client_ip_header: ""
+
+# Logs, each in one file per UTC day in dir: access-2026-11-14.log (every
+# created, edited, deleted or opened link), admin-2026-11-14.log (every
+# admin command) and error-2026-11-14.log (warnings and errors). One
+# tab-separated line per event; the README lists the columns. A file stays
+# as text for plain_days days, then is kept compressed (.log.gz, read it
+# with gzip -dc) for archive_days days, then is removed. archive_days: 0
+# keeps no archive. In the container image, set dir to a folder in the
+# volume, such as /data/logs: ./logs would be /logs, which qisqa's user
+# there cannot create. [restart]
+log:
+  enabled: false
+  dir: ./logs
+  redirects: false    # true: also log every redirect
+  plain_days: 7       # at least 1
+  archive_days: 30
+
+# Extra words that must never appear in a generated code, added to the
+# built-in list of Uzbek, Russian and English profanity.
+blacklist: []

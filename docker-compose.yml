@@ -1,0 +1,27 @@
+# qisqa in a container:
+#   1. cp config.example.yaml config.yaml
+#   2. docker compose up -d --build
+#   3. docker compose exec app /qisqa -config /etc/qisqa/config.yaml domain add short.example
+#
+# The links, accounts and domains are kept in the volume "data", at /data:
+# the example's data_dir, ./data, is that folder in the container.
+#
+# The service log goes to "docker compose logs app". With the log files on,
+# set log.dir to a folder in the volume, such as /data/logs: the example's
+# ./logs would be /logs, which qisqa's user cannot create, and qisqa would
+# not start.
+services:
+  app:
+    build: .
+    # qisqa ends itself when the disk fails, to start again from what is on
+    # disk: it is started again unless it was stopped by hand.
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/etc/qisqa/config.yaml:ro
+      - data:/data
+    # Reachable from this machine only, where a reverse proxy can pass
+    # requests on to it.
+    ports: ["127.0.0.1:8080:8080"]
+
+volumes:
+  data:

@@ -1,0 +1,431 @@
+openapi: 3.1.0
+info:
+  title: qisqa API
+  version: "1"
+  summary: Create, edit and delete short links.
+  description: |
+    qisqa turns a long URL into a short link and redirects everyone who
+    opens the short link to the long URL. Every link expires. A link can also
+    be secured: it stops working shortly after it is first opened, and it can
+    ask for a password before it opens.
+
+    The same API is described in prose at `/api/llms.txt`.
+
+    Durations are a number and a unit: `30s`, `15m`, `12h`, `10d`. The longest
+    is `36500d`.
+    A request body is a single JSON object of at most 64 KB; unknown fields
+    are rejected.
+servers:
+  - url: https://short.example
+    description: Replace with the address of your service.
+security:
+  - bearer: []
+
+paths:
+  /api/links:
+    post:
+      operationId: createLink
+      summary: Create a link, or shorten every URL inside a text
+      description: |
+        With `url`: creates a link. The same request sent again by the same
+        account within 10 minutes gets the same link back (`200`), so a retry
+        does not make a second link. With `expires_after_open` the link is
+        secured, with `password` it asks for that password, and either way it
+        is always new. A URL to a host the operator blocked is refused
+        (`400`).
+
+        With `text`: every URL inside the text is replaced with a short link
+        and the new text is returned with the links (`200`). A URL on one of
+        the service's own short domains is never replaced. Without `urls`,
+        a URL that may not be shortened, or whose short link would not be
+        shorter, stays as it is. With `urls`, exactly the listed URLs are
+        shortened. One request creates at most 20 links.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+            examples:
+              link:
+                summary: A link that lives ten days
+                value:
+                  url: https://example.com/articles/2026/11/a-long-title?ref=mail
+                  expires_in: 10d
+              secured:
+                summary: A link that works for one minute after it is first opened
+                value:
+                  url: https://example.com/articles/2026/11/a-long-title?ref=mail
+                  expires_after_open: 1m
+              password:
+                summary: A link that opens only with its password
+                value:
+                  url: https://example.com/reports/2026/q3.pdf
+                  password: plum-river-42
+              text:
+                summary: Shorten every URL inside a text
+                value:
+                  text: "Read more: https://example.com/articles/2026/11/a-long-title?ref=mail. Thank you!"
+                  format: bare
+      responses:
+        "201":
+          description: The link was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+              example:
+                code: aB3xK
+                domain: short.example
+                short_url: https://short.example/aB3xK
+                url: https://example.com/articles/2026/11/a-long-title?ref=mail
+                expires_at: "2026-11-23T10:00:00Z"
+                secured: false
+                password: false
+                created: true
+        "200":
+          description: |
+            With `url`: the same request was sent within the last 10 minutes,
+            and the link it made is returned.
+            With `text`: the text with its URLs replaced.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Link"
+                  - $ref: "#/components/schemas/TextResult"
+              examples:
+                existing:
+                  summary: The same request was sent a moment ago
+                  value:
+                    code: aB3xK
+                    domain: short.example
+                    short_url: https://short.example/aB3xK
+                    url: https://example.com/articles/2026/11/a-long-title?ref=mail
+                    expires_at: "2026-11-23T10:00:00Z"
+                    secured: false
+                    password: false
+                    created: false
+                text:
+                  summary: A shortened text
+                  value:
+                    text: "Read more: short.example/aB3xK. Thank you!"
+                    links:
+                      - code: aB3xK
+                        domain: short.example
+                        short_url: short.example/aB3xK
+                        url: https://example.com/articles/2026/11/a-long-title?ref=mail
+                        expires_at: "2026-11-23T10:00:00Z"
+                        secured: false
+                        password: false
+                        created: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/Blocked"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/links/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        description: The short code of the link.
+        schema:
+          type: string
+        example: aB3xK
+      - name: domain
+        in: query
+        required: false
+        description: The short domain the link is on. Default, the account's first domain.
+        schema:
+          type: string
+        example: short.example
+    patch:
+      operationId: editLink
+      summary: Change the long URL or the lifetime of a link
+      description: |
+        Send at least one field. `expires_in` sets the lifetime counted from
+        now, shorter or longer than before. An expired link works again once
+        it gets a new `expires_in`. A secured or password link cannot be
+        edited. Only the account's own links can be edited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchRequest"
+            example:
+              url: https://example.com/articles/2026/12/another-title
+              expires_in: 3d
+      responses:
+        "200":
+          description: The changed link.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+              example:
+                code: aB3xK
+                domain: short.example
+                short_url: https://short.example/aB3xK
+                url: https://example.com/articles/2026/12/another-title
+                expires_at: "2026-11-16T10:00:00Z"
+                secured: false
+                password: false
+                created: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The link is secured or has a password, and cannot be edited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: a secured or password link cannot be edited; delete it and create a new one
+        "429":
+          $ref: "#/components/responses/Blocked"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: deleteLink
+      summary: Delete a link
+      description: |
+        The link stops working at once. Its code is never used again,
+        unless the operator removes the domain and adds it again, loses the
+        service's data, or rolls it back without passing over the codes made
+        since.
+      responses:
+        "204":
+          description: The link was deleted. No body.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/Blocked"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: The token of an account.
+
+  responses:
+    BadRequest:
+      description: The request is wrong; `error` says what to fix.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            duration:
+              value:
+                error: 'expires_in: invalid duration "10x" (examples: 30m, 12h, 10d)'
+            blocked:
+              summary: A URL to a host the operator blocked
+              value:
+                error: 'host "example.com" is blocked'
+            spelling:
+              summary: A URL whose host is no host name
+              value:
+                error: 'url: "-пример.example" is not a valid host name'
+    Unauthorized:
+      description: The token is missing or wrong, or its account is disabled.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: missing or invalid API token
+    Forbidden:
+      description: The domain is not one of the account's, or the account has no domain.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: 'domain: "go.example" is not available to this account'
+    NotFound:
+      description: There is no such link, or it belongs to another account.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: link not found
+    Blocked:
+      description: This client is blocked for a few minutes after too many bad requests.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: too many requests
+    InternalError:
+      description: The service failed. Try again later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: internal error
+
+  schemas:
+    CreateRequest:
+      type: object
+      description: Give either `url` (one link) or `text` (every URL inside a text).
+      additionalProperties: false
+      oneOf:
+        - required: [url]
+        - required: [text]
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          description: |
+            The long URL. Starts with `http://` or `https://`. A host with
+            letters outside ASCII, such as `пример.example`, is accepted and
+            comes back in its `xn--` form, `xn--e1afmkfd.example`, the name a
+            browser looks up; that form is what is checked and stored. An
+            IPv4 address is written as four numbers, like `192.0.2.1`, never
+            in an IPv6 form. Other spellings that a browser reads as another
+            host, such as an IPv4 address written as one number, are refused
+            (`400`), and so is a host name with an empty label, such as
+            `evil.example..`, or with an `xn--` label that is not the ASCII
+            form of a name, such as `xn--evil-.example`.
+        text:
+          type: string
+          description: A text whose URLs are replaced with short links. At most 10 KB.
+        urls:
+          type: array
+          items:
+            type: string
+          description: |
+            Only with `text`: exactly which URLs to shorten. Without it, every
+            URL found in the text is shortened. A listed URL that may not be
+            shortened is an error; one that does not occur in the text is
+            still shortened. An empty list shortens nothing.
+        domain:
+          type: string
+          description: The short domain to create links on, one of the account's. Default, the account's first domain.
+        expires_in:
+          type: string
+          description: How long the link lives, for example `30m`, `12h` or `10d`. Greater than zero. Default, set by the service.
+        expires_after_open:
+          type: string
+          description: |
+            Makes the link secured: how long it keeps working after it is
+            first opened. `"0"` means it works exactly once.
+        password:
+          type: string
+          minLength: 4
+          maxLength: 128
+          description: |
+            Makes the link ask for this password, 4 to 128 bytes, before it
+            opens; only a salted hash of it is kept. Opening the link shows a
+            page whose script sends `POST /{code}` with
+            `{"password": "..."}`. The answer is `200` with `{"url": "..."}`
+            for the right password, `403` with `{"error": "wrong password"}`
+            for a wrong one, and `429` while the link is locked: five wrong
+            passwords in a row lock it for five minutes. No more of a link's
+            passwords are checked at once than could still lock it, and the
+            service checks only a few passwords of all links at once; a
+            password sent while that many are being checked gets `429` with
+            `Retry-After: 1`, is not counted, and can be sent again a second
+            later. With `expires_after_open` as well, only the right password
+            uses the link up.
+        format:
+          type: string
+          enum: [https, https_www, bare, www]
+          description: |
+            The shape of `short_url`: `https://short.example/aB3xK`,
+            `https://www.short.example/aB3xK`, `short.example/aB3xK` or
+            `www.short.example/aB3xK`. Default, set by the service.
+
+    PatchRequest:
+      type: object
+      description: At least one field is required.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          description: The new long URL, under the same rules as for create. The code stays the same.
+        expires_in:
+          type: string
+          description: The new lifetime, counted from now. Greater than zero.
+
+    Link:
+      type: object
+      required: [code, domain, short_url, url, expires_at, secured, password, created]
+      properties:
+        code:
+          type: string
+          description: The short code, the path of the short link. Letters and digits, case-sensitive.
+        domain:
+          type: string
+          description: The short domain the link is on.
+        short_url:
+          type: string
+          description: The link to hand out, in the requested format.
+        url:
+          type: string
+          description: The long URL the link leads to, its host in ASCII form.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the link stops working. UTC.
+        secured:
+          type: boolean
+          description: True for a link created with `expires_after_open`.
+        password:
+          type: boolean
+          description: True for a link created with `password`. The password itself is never returned.
+        created:
+          type: boolean
+          description: True if this request created the link, false if the same request sent within the last 10 minutes did.
+
+    TextResult:
+      type: object
+      required: [text, links]
+      properties:
+        text:
+          type: string
+          description: The text with its URLs replaced by short links.
+        links:
+          type: array
+          description: |
+            The links that were created, in order of first appearance in the
+            text; with `urls`, in the order of that list. Empty when nothing
+            was shortened.
+          items:
+            $ref: "#/components/schemas/Link"
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: What went wrong, in English.

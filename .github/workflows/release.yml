@@ -1,0 +1,29 @@
+# Publishes a release when a version tag is pushed:
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# It builds the archives for every platform and attaches them, with their
+# checksums, to a GitHub release named after the tag.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build the archives
+        run: make dist VERSION=${GITHUB_REF_NAME#v}
+      - name: Publish the release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

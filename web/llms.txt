@@ -1,0 +1,272 @@
+# qisqa
+
+qisqa is a URL shortener. It turns a long URL into a short link such as
+`https://short.example/aB3xK` and redirects everyone who opens the short link
+to the long URL. Every link expires. A link can also be *secured*: it stops
+working shortly after it is first opened, and programs that only preview
+links cannot see where it leads. A link can also ask for a password before
+it opens. This file describes the HTTP API that creates, edits and deletes
+links.
+
+The examples use `https://short.example` as the address of the service and
+`$TOKEN` as the API token. A machine-readable description of the same API is
+at `/api/openapi.yaml`.
+
+## Auth
+
+Every request to `/api/links` needs this header, with the token of an
+account:
+
+```
+Authorization: Bearer <token>
+```
+
+A missing or wrong token, or the token of a disabled account, is answered
+with `401`. A client that keeps sending wrong tokens is blocked for a few
+minutes and gets `429` for every request.
+
+Bodies are JSON. A request body is a single JSON object of at most 64 KB.
+A field the API does not know is an error (`400`), so a misspelled field name
+is reported instead of ignored.
+
+The short domain a link belongs to is chosen with `domain`, never by the
+`Host` header of the API request. Without `domain` the account's first
+domain is used. A domain that is not one of the account's is refused with
+`403`. An account edits and deletes only its own links.
+
+## Create a link
+
+`POST /api/links`
+
+| Field | Required | Meaning |
+|---|---|---|
+| `url` | yes | The long URL. Starts with `http://` or `https://`; at most 2048 bytes. A host with letters outside ASCII is turned into its ASCII `xn--` form, which is what is stored and returned in `url`. Other spellings of a host, such as an IPv4 address written as one number, and a host name with an empty label, such as `evil.example..`, or with an `xn--` label that is not the ASCII form of a name, such as `xn--evil-.example`, are refused (see Rules). |
+| `domain` | no | The short domain to create the link on, one of the account's. Default: the account's first domain. |
+| `expires_in` | no | How long the link lives: a duration such as `30m`, `12h` or `10d`. Default: set by the service (10 days unless configured otherwise). |
+| `expires_after_open` | no | Makes the link secured. A duration: how long the link keeps working after it is first opened. `"0"` means it works exactly once. |
+| `password` | no | Makes the link ask for this password, 4 to 128 bytes, before it opens. Only a salted hash of it is kept. |
+| `format` | no | The shape of `short_url`: `https`, `https_www`, `bare` or `www`. Default: set by the service. |
+
+```sh
+curl -X POST https://short.example/api/links \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/articles/2026/11/a-long-title?ref=mail", "expires_in": "10d"}'
+```
+
+The answer is a link object, with `201` when the link is new and `200` when
+the same request was sent within the last 10 minutes: then the link it made
+comes back, so a retry does not make a second link.
+
+```json
+{
+  "code": "aB3xK",
+  "domain": "short.example",
+  "short_url": "https://short.example/aB3xK",
+  "url": "https://example.com/articles/2026/11/a-long-title?ref=mail",
+  "expires_at": "2026-11-23T10:00:00Z",
+  "secured": false,
+  "password": false,
+  "created": true
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `code` | The short code: the path of the short link. Letters and digits, case-sensitive. |
+| `domain` | The short domain the link is on. |
+| `short_url` | The link to hand out, in the requested `format`. |
+| `url` | The long URL the link leads to, its host in ASCII form. |
+| `expires_at` | When the link stops working. RFC 3339, UTC. |
+| `secured` | `true` for a link created with `expires_after_open`. |
+| `password` | `true` for a link created with `password`. The password itself is never returned. |
+| `created` | `true` if this request created the link, `false` if the same request sent within the last 10 minutes did. |
+
+## Shorten URLs in a text
+
+`POST /api/links` with `text` instead of `url`. Every URL inside the text is
+replaced with a short link, and the new text comes back together with the
+links.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `text` | yes | The text, at most 10 KB. |
+| `urls` | no | Exactly which URLs to shorten. Without it, every URL found in the text is shortened. |
+| `domain`, `expires_in`, `expires_after_open`, `password`, `format` | no | As for a single link; applied to every link of the text. |
+
+```sh
+curl -X POST https://short.example/api/links \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Read more: https://example.com/articles/2026/11/a-long-title?ref=mail. Thank you!", "format": "bare"}'
+```
+
+The answer is always `200`:
+
+```json
+{
+  "text": "Read more: short.example/aB3xK. Thank you!",
+  "links": [
+    {
+      "code": "aB3xK",
+      "domain": "short.example",
+      "short_url": "short.example/aB3xK",
+      "url": "https://example.com/articles/2026/11/a-long-title?ref=mail",
+      "expires_at": "2026-11-23T10:00:00Z",
+      "secured": false,
+      "password": false,
+      "created": true
+    }
+  ]
+}
+```
+
+How URLs are found and replaced:
+
+- Only URLs that start with `http://` or `https://` are found. `example.com/page`
+  without a scheme is left alone.
+- Punctuation after a URL (`. , ; : ! ? ) ] } " '` and punctuation outside
+  ASCII such as `» ” …`) is not part of the URL and stays in the text. A
+  closing bracket that matches a bracket opened inside the URL, as in
+  `https://example.com/wiki/Go_(language)`, belongs to the URL.
+- A URL that already points at one of the service's own short domains, with
+  or without `www.`, is never replaced: a short link is not shortened again.
+- Without `urls`: a URL that may not be shortened (see Rules), or whose short
+  link would not be shorter than the URL itself, stays as it is. That is not
+  an error, and such a URL has no entry in `links`.
+- With `urls`: exactly the listed URLs are shortened and every occurrence of
+  them in the text is replaced, even when the short link is longer. A listed
+  URL that may not be shortened is an error (`400`). A listed URL that does
+  not occur in the text is still shortened and returned in `links`. An empty
+  list shortens nothing.
+- A URL that occurs several times is one link.
+- `links` is in order of first appearance in the text (with `urls`: in the
+  order of that list). It is `[]` when nothing was shortened.
+- One request creates at most 20 links; more is an error (`400`) and nothing
+  is created.
+
+## Edit a link
+
+`PATCH /api/links/{code}?domain=short.example`
+
+The `domain` query parameter is optional and defaults to the account's
+first domain. Send at least one field:
+
+| Field | Meaning |
+|---|---|
+| `url` | The new long URL. The code stays the same. |
+| `expires_in` | The new lifetime, counted from now, shorter or longer than before. |
+
+```sh
+curl -X PATCH "https://short.example/api/links/aB3xK?domain=short.example" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/articles/2026/12/another-title", "expires_in": "3d"}'
+```
+
+The answer is `200` and the link object:
+
+```json
+{
+  "code": "aB3xK",
+  "domain": "short.example",
+  "short_url": "https://short.example/aB3xK",
+  "url": "https://example.com/articles/2026/12/another-title",
+  "expires_at": "2026-11-16T10:00:00Z",
+  "secured": false,
+  "password": false,
+  "created": false
+}
+```
+
+`404`: there is no such link, or it is another account's. `409`: the link is
+secured or has a password (such a link cannot be edited). An expired link
+works again once it gets a new `expires_in`.
+
+## Delete a link
+
+`DELETE /api/links/{code}?domain=short.example`
+
+The `domain` query parameter is optional, as for edit.
+
+```sh
+curl -X DELETE "https://short.example/api/links/aB3xK?domain=short.example" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+The answer is `204` with no body. The link stops working at once. `404`:
+there is no such link, or it is another account's.
+
+## Errors
+
+Every error is a JSON object with one field:
+
+```json
+{"error": "expires_in: invalid duration \"10x\" (examples: 30m, 12h, 10d)"}
+```
+
+| Status | Meaning |
+|---|---|
+| `400` | The request is wrong, or its URL may not be shortened; `error` says what to fix. |
+| `401` | The token is missing or wrong, or its account is disabled. |
+| `403` | The domain is not one of the account's, or the account has no domain. |
+| `404` | No such link, or no such API endpoint. |
+| `409` | The link is secured or has a password, and cannot be edited. |
+| `429` | This client is blocked for a few minutes after too many bad requests. |
+| `500` | The service failed. Try again later. |
+
+## Rules
+
+- **A retry gets the same link.** The same request (account, domain, URL and
+  `expires_in`) sent again within 10 minutes returns the link it made. After
+  that, or with another URL, domain or `expires_in`, a new link is made.
+- **Codes are never used again.** A code stays its link's, also after the
+  link expired or was deleted, so an old link never leads somewhere new,
+  unless the operator removes the domain and adds it again, loses the
+  service's data, or rolls it back without passing over the codes made
+  since.
+- **Secured and password links are always new.** A request with
+  `expires_after_open` or `password` creates a new code every time, even for
+  the same URL. Such a link cannot be edited, only deleted.
+- **How a secured link opens.** Opening it in a browser shows a small page
+  whose script asks the service for the long URL and then goes there.
+  Programs that only fetch the page, such as link-preview bots, neither use
+  up the link nor learn the long URL. An unopened secured link still expires
+  at `expires_at`.
+- **How a password link opens.** Opening it in a browser shows a small page
+  with one password field. Its script sends `POST /{code}` with
+  `{"password": "..."}`. The answer is `200` with `{"url": "..."}` for the
+  right password, `403` with `{"error": "wrong password"}` for a wrong one,
+  and `429` while the link is locked. Five wrong passwords in a row lock the
+  link for five minutes, and a wrong password counts against the client like
+  a code that does not exist. No more of a link's passwords are checked at
+  once than could still lock it, and the service checks only a few
+  passwords of all links at once: a password sent while that many are
+  being checked gets `429` with `Retry-After: 1`, is not counted, and can
+  be sent again a second later. Neither the page nor a refused attempt holds
+  anything of the long URL. A link with both `password` and
+  `expires_after_open` asks for the password first, so only the right
+  password uses it up.
+- **`format`** decides only how `short_url` is written; every form opens the
+  same link:
+  - `https`: `https://short.example/aB3xK`
+  - `https_www`: `https://www.short.example/aB3xK`
+  - `bare`: `short.example/aB3xK`
+  - `www`: `www.short.example/aB3xK`
+- **Which URLs may be shortened.** The URL starts with `http://` or
+  `https://`, is at most 2048 bytes long, does not point at one of the
+  service's own short domains and not at a host the operator blocked. A
+  host with letters outside ASCII, such as `пример.example`, is accepted
+  and comes back in its `xn--` form, `xn--e1afmkfd.example`, the name a
+  browser looks up; the rules apply to that form. An IPv4 address is
+  written as four numbers, like `192.0.2.1`, never in an IPv6 form.
+  Other spellings that a browser reads as another host, such as an IPv4
+  address written as one number, and a host name with an empty label,
+  such as `evil.example..`, or with an `xn--` label that is not the ASCII
+  form of a name, such as `xn--evil-.example`, are refused with `400`.
+  For example:
+  `{"error": "url: write the address as four numbers, like 192.0.2.1"}`. A
+  domain may also be limited to certain target hosts; a URL to any other
+  host is refused there.
+- **Durations** are a number and a unit: `30s`, `15m`, `12h`, `10d`. The longest is `36500d`.
+  `expires_in` must be greater than zero.
