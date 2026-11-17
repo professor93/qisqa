@@ -16,8 +16,9 @@ These are the pages of qisqa's documentation, in reading order. The
    links, password links and text mode.
 6. [Logs](logs.md): the service log, and the columns of the access, admin
    and error logs.
-7. [Running qisqa](running.md): running it as a service under systemd,
-   Supervisor, OpenRC or launchd, the health check, and small servers.
+7. [Running qisqa](running.md): the installer, running qisqa as a service
+   under systemd, Supervisor, OpenRC or launchd, the health check, and small
+   servers.
 8. [Behind nginx](nginx.md): nginx in front of qisqa, for HTTPS.
 9. [Docker](docker.md): the image and the compose file.
 10. [Speed](speed.md): what qisqa did on a laptop and in a small container,

@@ -199,6 +199,98 @@ func TestDocLinksLeadSomewhere(t *testing.T) {
 	}
 }
 
+// codeBlocks returns the contents of the fenced code blocks of a Markdown
+// document, without their fences.
+func codeBlocks(doc string) []string {
+	var blocks []string
+	var block strings.Builder
+	fenced := false
+	for line := range strings.Lines(doc) {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(line), "```"):
+			if fenced {
+				blocks = append(blocks, block.String())
+				block.Reset()
+			}
+			fenced = !fenced
+		case fenced:
+			block.WriteString(line)
+		}
+	}
+	return blocks
+}
+
+// heredoc returns the text of the here-document of a shell script that is
+// opened with <<'name' and closed by a line that is name alone.
+func heredoc(script, name string) (string, bool) {
+	var text strings.Builder
+	inside := false
+	for line := range strings.Lines(script) {
+		switch {
+		case !inside && strings.HasSuffix(strings.TrimRight(line, "\n"), "<<'"+name+"'"):
+			inside = true
+		case inside && strings.TrimRight(line, "\n") == name:
+			return text.String(), true
+		case inside:
+			text.WriteString(line)
+		}
+	}
+	return "", false
+}
+
+// TestInstallerServiceFilesMatchTheDocs: the systemd unit and the OpenRC
+// script that install.sh writes are, before it puts in another folder than
+// /opt/qisqa, the text that docs/running.md shows, so that the page and the
+// installer describe one layout.
+func TestInstallerServiceFilesMatchTheDocs(t *testing.T) {
+	script := readDoc(t, "install.sh")
+	blocks := codeBlocks(readDoc(t, "docs/running.md"))
+	for _, file := range []struct{ name, start string }{
+		{"UNIT", "[Unit]\n"},
+		{"INIT", "#!/sbin/openrc-run\n"},
+	} {
+		carried, ok := heredoc(script, file.name)
+		if !ok {
+			t.Errorf("install.sh has no here-document <<'%s'", file.name)
+			continue
+		}
+		var shown []string
+		for _, block := range blocks {
+			if strings.HasPrefix(block, file.start) {
+				shown = append(shown, block)
+			}
+		}
+		if len(shown) != 1 {
+			t.Errorf("docs/running.md has %d code blocks that start with %q, want 1", len(shown), file.start)
+			continue
+		}
+		if carried != shown[0] {
+			t.Errorf("install.sh's <<'%s' differs from the code block of docs/running.md:\n--- install.sh\n%s--- docs/running.md\n%s", file.name, carried, shown[0])
+		}
+	}
+}
+
+// TestReadmeNamesTheInstaller: the Quick start begins with the command that
+// runs install.sh from the main branch of this repository.
+func TestReadmeNamesTheInstaller(t *testing.T) {
+	module, _, _ := strings.Cut(strings.TrimPrefix(readDoc(t, "go.mod"), "module "), "\n")
+	repository, ok := strings.CutPrefix(module, "github.com/")
+	if !ok {
+		t.Fatalf("the module %q is not on github.com", module)
+	}
+	command := "curl -fsSL https://raw.githubusercontent.com/" + repository + "/main/install.sh | sh"
+	quickStart, ok := section(readDoc(t, "README.md"), "## Quick start")
+	if !ok {
+		t.Fatal("README.md has no section ## Quick start")
+	}
+	if !strings.Contains(quickStart, command) {
+		t.Errorf("the Quick start does not give the command %q", command)
+	}
+	if _, err := os.Stat("install.sh"); err != nil {
+		t.Errorf("the command runs install.sh, which is not there: %v", err)
+	}
+}
+
 // TestEveryDocPageIsListed: every page of docs/ is linked from the list of
 // pages, docs/README.md, and from the section Documentation of README.md.
 func TestEveryDocPageIsListed(t *testing.T) {
@@ -347,7 +439,7 @@ func TestRepositoryUsesOnlyExampleDomains(t *testing.T) {
 	urls := regexp.MustCompile(`https?://([A-Za-z0-9.-]+)`)
 	fullName := regexp.MustCompile(`\.[a-z]{2,}$`) // "www" alone is code, not a host
 	allowed := func(host string) bool {
-		return host == "github.com" ||
+		return host == "github.com" || host == "raw.githubusercontent.com" ||
 			host == "example.com" || strings.HasSuffix(host, ".example.com") ||
 			host == "example.org" || strings.HasSuffix(host, ".example.org") ||
 			strings.HasSuffix(host, ".example")

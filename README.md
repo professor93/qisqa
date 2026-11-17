@@ -31,7 +31,26 @@ binary. The name is the Uzbek word for "short".
 
 ## Quick start
 
-Download qisqa for your system from the
+On Linux or macOS, this installs qisqa:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/professor93/qisqa/main/install.sh | sh
+```
+
+On Linux, as root or as a user who may use `sudo`, it installs qisqa into
+`/opt/qisqa` for a user `qisqa`, with a systemd or OpenRC service that it
+starts; otherwise it installs qisqa into `~/qisqa`, and you start it as its
+last lines say. To read the script before you run it:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/professor93/qisqa/main/install.sh
+sh install.sh
+```
+
+[The installer](docs/running.md#the-installer) has its options and how to
+remove what it installed.
+
+Without the installer, download qisqa for your system from the
 [releases page](https://github.com/professor93/qisqa/releases) (see
 [Releases](#releases)), or build it in a copy of this repository with Go
 1.27 or newer:
@@ -58,15 +77,12 @@ stop it with Ctrl-C:
 ./qisqa -config config.yaml
 ```
 
-```
-time=2026-11-15T11:55:58.147+05:00 level=INFO msg="qisqa started" version=dev listen=127.0.0.1:8080 config=config.yaml data_dir=./data admin=data/qisqa.sock
-```
-
 A new data folder has no short domain and no account, and without an
-account the API is closed. In a second terminal, in the same folder, add a
-domain and an account that may use it. These are admin commands: the same
-binary hands them to the running server (see
-[Accounts and domains](docs/accounts-and-domains.md)).
+account the API is closed. Add a domain and an account that may use it.
+These are admin commands: the same binary hands them to the running server
+(see [Accounts and domains](docs/accounts-and-domains.md)). The installer's
+last lines give them in the form for its install; without it, run them in a
+second terminal, in the same folder:
 
 ```sh
 ./qisqa -config config.yaml domain add short.example
@@ -140,8 +156,9 @@ The rest is in the folder [`docs`](docs/README.md), in this order:
   links, password links and text mode.
 - [Logs](docs/logs.md): the service log, and the columns of the access,
   admin and error logs.
-- [Running qisqa](docs/running.md): running it as a service under systemd,
-  Supervisor, OpenRC or launchd, the health check, and small servers.
+- [Running qisqa](docs/running.md): the installer, running qisqa as a
+  service under systemd, Supervisor, OpenRC or launchd, the health check,
+  and small servers.
 - [Behind nginx](docs/nginx.md): nginx in front of qisqa, for HTTPS.
 - [Docker](docs/docker.md): the image and the compose file.
 - [Speed](docs/speed.md): what qisqa did on a laptop and in a small

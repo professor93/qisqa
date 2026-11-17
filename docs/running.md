@@ -1,7 +1,90 @@
 # Running qisqa
 
-This page shows how to run qisqa as a service that is started again when it
-stops, how to check that it answers, and what it needs on a small server.
+This page shows how to install qisqa with its installer or by hand, how to
+run it as a service that is started again when it stops, how to check that
+it answers, and what it needs on a small server.
+
+## The installer
+
+`install.sh`, at the root of the repository, installs the latest release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/professor93/qisqa/main/install.sh | sh
+```
+
+To read it before you run it:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/professor93/qisqa/main/install.sh
+sh install.sh
+```
+
+It asks no question and says each step in one line. It downloads the
+release's `checksums.txt` and the archive for this system and processor
+from GitHub, checks the archive's SHA-256, and stops before it installs
+anything when the two differ. Then:
+
+- **On Linux, as root, or as a user who may use `sudo`** (without a
+  password, or with a terminal for `sudo` to ask on), it makes a system
+  install. A missing `curl` (or `wget`), `tar` or `sha256sum` is installed
+  with the package manager. It makes the system user `qisqa`, and puts the
+  binary, the documents of the archive, a `config.yaml` that listens on
+  `127.0.0.1:8080`, and the data folder into `/opt/qisqa`, laid out as in
+  the [systemd](#systemd) example. Where systemd runs, it writes the unit of
+  that example, enables the service and starts it; where OpenRC runs, the
+  script of the [OpenRC](#openrc) example, likewise. It then waits up to 10
+  seconds for `/healthz`, and fails if qisqa does not answer. Where neither
+  runs, it makes no service and says how to start qisqa by hand.
+- **On macOS, with `--user`, or without root**, it installs for the
+  current user into `~/qisqa`, mode 700: the binary, the documents and the
+  same `config.yaml`, and no service. A missing tool is then an error.
+
+Its last lines give the version, where the config is, and the commands
+that add a domain and an account, in the form for that install. It writes
+`config.yaml` only where there is none: a second run installs the binary
+and the documents again, keeps `config.yaml` and the data folder as they
+are, and restarts the service. It installs into a folder that is there only
+when root owns it and nobody else may write to it.
+
+| Option | Meaning |
+|---|---|
+| `--user` | Install for the current user only. |
+| `--version 0.1.0` | The release to install. Default: the latest. |
+| `--dir PATH` | The folder to install into. Default: `/opt/qisqa`, or `~/qisqa` for the current user. |
+| `--help` | Show the options. |
+
+Through the pipe, the options come after `sh -s --`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/professor93/qisqa/main/install.sh | sh -s -- --user
+```
+
+To remove what it installed, stop the service and remove it, with systemd:
+
+```sh
+sudo systemctl disable --now qisqa
+sudo rm /etc/systemd/system/qisqa.service
+sudo systemctl daemon-reload
+```
+
+or with OpenRC, as root:
+
+```sh
+rc-service qisqa stop
+rc-update del qisqa default
+rm /etc/init.d/qisqa /var/log/qisqa.log
+```
+
+Then remove the folder and the user. The folder holds the data folder:
+every link goes with it, so back it up first if you may want it again.
+
+```sh
+sudo rm -r /opt/qisqa
+sudo userdel qisqa
+```
+
+On Alpine, `deluser qisqa` in place of `userdel qisqa`. A user install has
+no service: stop qisqa and remove its folder, `rm -r ~/qisqa`.
 
 ## Running as a service
 
@@ -13,7 +96,9 @@ It also stops by itself, with status 1, when a sync fails (see
 Every example below starts qisqa again when it stops by itself, runs it as
 a user of its own, `qisqa`, not as root, in the folder `/opt/qisqa`, which
 holds the binary, `config.yaml` and the data folder `data`, and gives it 15
-seconds to stop.
+seconds to stop. The folder belongs to root and is open to the group
+`qisqa`; only the data folder belongs to the user `qisqa`, which can read
+its binary and `config.yaml` but not change them.
 
 ### systemd
 
@@ -23,9 +108,9 @@ folder:
 
 ```sh
 sudo useradd --system --home-dir /opt/qisqa --shell /usr/sbin/nologin qisqa
-sudo install -d -m 755 /opt/qisqa
+sudo install -d -o root -g qisqa -m 750 /opt/qisqa
 sudo install -m 755 qisqa /opt/qisqa/
-sudo install -m 644 config.yaml /opt/qisqa/
+sudo install -o root -g qisqa -m 640 config.yaml /opt/qisqa/
 sudo install -d -o qisqa -g qisqa -m 700 /opt/qisqa/data
 ```
 
@@ -93,9 +178,9 @@ current folder:
 ```sh
 addgroup -S qisqa
 adduser -S -D -H -h /opt/qisqa -s /sbin/nologin -G qisqa qisqa
-install -d -m 755 /opt/qisqa
+install -d -o root -g qisqa -m 750 /opt/qisqa
 install -m 755 qisqa /opt/qisqa/
-install -m 644 config.yaml /opt/qisqa/
+install -o root -g qisqa -m 640 config.yaml /opt/qisqa/
 install -d -o qisqa -g qisqa -m 700 /opt/qisqa/data
 ```
 
