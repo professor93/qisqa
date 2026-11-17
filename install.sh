@@ -11,6 +11,10 @@
 #
 # It is plain POSIX sh: it runs under dash, busybox ash and macOS sh.
 # QISQA_RELEASES_URL replaces the releases address, for tests only.
+#
+# The whole script is one group, { ... }, which the shell reads to its end
+# before it runs any of it: a download cut short runs nothing.
+{
 set -eu
 
 # useradd, rc-service and the like are in the sbin folders, which are not in
@@ -207,9 +211,29 @@ find_rights() {
 		case $dir in
 		*[!A-Za-z0-9._/-]*) die "--dir: for a system install the path may hold only letters, digits and . _ - /" ;;
 		esac
+		# The unit's ProtectSystem=full makes /usr, /boot, /efi and /etc
+		# read-only for qisqa, and its ProtectHome=true hides /home, /root and
+		# /run/user from it; the rest of /run is emptied at every boot.
+		if [ -d /run/systemd/system ]; then
+			case $dir/ in
+			/usr/* | /boot/* | /efi/* | /etc/*) die "--dir: the systemd unit (ProtectSystem=full) makes $dir read-only for qisqa; choose another folder, such as /srv/qisqa" ;;
+			/home/* | /root/* | /run/user/*) die "--dir: the systemd unit (ProtectHome=true) hides $dir from qisqa; choose another folder, or run with --user for one in your home" ;;
+			/run/*) die "--dir: $dir is emptied at every boot; choose another folder, such as /srv/qisqa" ;;
+			esac
+		fi
 		say "Install: a system install into $dir, with root rights, since $why."
 	else
 		say "Install: a user install into $dir, since $why."
+	fi
+}
+
+# check_folder refuses a folder that is there, holds other files and no
+# qisqa: the script would put its own among them, and over those of the same
+# name. A .qisqa.new alone is what a run that stopped at the binary leaves.
+check_folder() {
+	if as_root test -d "$dir" && ! as_root test -f "$dir/qisqa" &&
+		as_root ls -A "$dir" </dev/null | grep -qv '^\.qisqa\.new$'; then
+		die "$dir is there and holds other files but no qisqa; the script does not install into it"
 	fi
 }
 
@@ -270,7 +294,7 @@ find_tools() {
 		as_root zypper --non-interactive --quiet install "$@" </dev/null >/dev/null || die "zypper could not install $*"
 	elif have pacman; then
 		say "Tools: installing $* with pacman."
-		as_root pacman -Sy --needed --noconfirm "$@" </dev/null >/dev/null || die "pacman could not install $*"
+		as_root pacman -S --needed --noconfirm "$@" </dev/null >/dev/null || die "pacman could not install $*"
 	else
 		die "missing: $missing, and no package manager was found to install it"
 	fi
@@ -282,7 +306,9 @@ find_tools() {
 	say "Tools: $get, tar and $sum are there."
 }
 
-# fetch downloads an https:// address into a file.
+# fetch downloads an https:// address into a file. With curl a redirect must
+# lead to https:// too; wget, used only where curl is missing, has no such
+# option, so with it only the first address is checked.
 fetch() {
 	case $1 in
 	https://*) ;;
@@ -316,8 +342,13 @@ download() {
 		base=$releases/download/v$version
 	fi
 	say "Download: $base/checksums.txt."
+	if [ "$version" = latest ]; then
+		release="the latest release"
+	else
+		release="a release $version"
+	fi
 	fetch "$base/checksums.txt" "$tmp/checksums.txt" ||
-		die "could not download $base/checksums.txt; is there a release $version? See $releases"
+		die "could not download $base/checksums.txt; is there $release? See $releases"
 	line=$(grep -E "^[0-9a-f]{64}  qisqa_[0-9A-Za-z.+-]+_${os}_${arch}\.tar\.gz\$" "$tmp/checksums.txt" || true)
 	[ -n "$line" ] || die "the release has no archive for $os $arch; see $releases"
 	[ "$(printf '%s\n' "$line" | wc -l)" -eq 1 ] || die "checksums.txt names more than one archive for $os $arch"
@@ -361,17 +392,17 @@ put() {
 }
 
 # documents copies README.md, LICENSE, config.example.yaml and docs/ from the
-# archive into the folder, those that the archive has.
+# archive into the folder, those that the archive has; a link is no document.
 documents() {
 	for name in README.md LICENSE config.example.yaml; do
-		if [ -f "$tmp/release/$name" ]; then
+		if [ -f "$tmp/release/$name" ] && [ ! -L "$tmp/release/$name" ]; then
 			put -m 644 "$tmp/release/$name" "$dir/$name"
 		fi
 	done
-	if [ -d "$tmp/release/docs" ]; then
+	if [ -d "$tmp/release/docs" ] && [ ! -L "$tmp/release/docs" ]; then
 		put -d -m 755 "$dir/docs"
 		for page in "$tmp/release/docs"/*.md; do
-			if [ -f "$page" ]; then
+			if [ -f "$page" ] && [ ! -L "$page" ]; then
 				put -m 644 "$page" "$dir/docs/${page##*/}"
 			fi
 		done
@@ -423,7 +454,14 @@ install_system() {
 		say "Config: keeping $dir/config.yaml."
 	else
 		config_file >"$tmp/config.yaml"
-		as_root install -o 0 -g 0 -m 644 "$tmp/config.yaml" "$dir/config.yaml"
+		# set -C: should the test above have been wrong (a sudo that failed),
+		# the shell does not write over the config that is there. Its $1 is
+		# the inner shell's.
+		# shellcheck disable=SC2016
+		as_root sh -c 'set -C; cat >"$1"' sh "$dir/config.yaml" <"$tmp/config.yaml" ||
+			die "could not write $dir/config.yaml, or it is there; nothing was written over it"
+		as_root chown 0:0 "$dir/config.yaml"
+		as_root chmod 644 "$dir/config.yaml"
 		say "Config: wrote $dir/config.yaml, which listens on 127.0.0.1:8080."
 	fi
 	if as_root test -e "$dir/data" || as_root test -L "$dir/data"; then
@@ -463,8 +501,8 @@ install_system() {
 	fi
 }
 
-# wait_for_health waits up to 10 seconds for /healthz on the address that
-# the config gives.
+# wait_for_health waits up to 10 seconds for qisqa's answer on /healthz of
+# the address that the config gives.
 wait_for_health() {
 	address=$(as_root sed -n 's/^listen:[[:space:]]*//p' "$dir/config.yaml" |
 		sed 's/[[:space:]]#.*//' | tr -d "\"' " | head -n 1)
@@ -475,18 +513,43 @@ wait_for_health() {
 	"[::]:"*) address="[::1]:${address#"[::]:"}" ;;
 	esac
 	url=http://$address/healthz
-	tries=0
+	tries=0 pid='' since=0
 	while :; do
-		if [ "$get" = curl ]; then
-			curl -fsS --max-time 1 -o /dev/null "$url" </dev/null 2>/dev/null && break
+		if answers; then
+			[ "$service" = systemd ] || break
+			# A server that holds the port already answers too, while qisqa
+			# fails to start and systemd starts it again every second: the
+			# service must also be active, with the same running process
+			# through two seconds of answers. MainPID is 0 between two starts.
+			now=$(as_root systemctl show -p MainPID qisqa </dev/null)
+			case $now in
+			MainPID=[1-9]*) ;;
+			*) now='' ;;
+			esac
+			if [ -z "$now" ] || [ "$now" != "$pid" ]; then
+				pid=$now since=$tries
+			elif [ $((tries - since)) -ge 2 ] &&
+				as_root systemctl is-active --quiet qisqa </dev/null; then
+				break
+			fi
 		else
-			wget -q -T 1 -O /dev/null "$url" </dev/null 2>/dev/null && break
+			pid=''
 		fi
 		tries=$((tries + 1))
 		[ "$tries" -lt 10 ] || die "qisqa does not answer on $url after 10 seconds; its output: $output"
 		sleep 1
 	done
 	say "Health: $url answers."
+}
+
+# answers tells whether $url gives qisqa's answer, {"status":"ok"}.
+answers() {
+	if [ "$get" = curl ]; then
+		answer=$(curl -fsS --max-time 1 "$url" </dev/null 2>/dev/null) || return 1
+	else
+		answer=$(wget -q -T 1 -O - "$url" </dev/null 2>/dev/null) || return 1
+	fi
+	[ "$answer" = '{"status":"ok"}' ]
 }
 
 install_user() {
@@ -561,6 +624,7 @@ main() {
 	parse_options "$@"
 	find_system
 	find_rights
+	check_folder
 	find_tools
 	tmp=
 	trap cleanup EXIT
@@ -575,5 +639,5 @@ main() {
 	finish
 }
 
-# Called last, so that a script cut short in the download does nothing.
 main "$@"
+}

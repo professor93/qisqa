@@ -32,10 +32,10 @@ anything when the two differ. Then:
   `127.0.0.1:8080`, the data folder and the log folder into `/opt/qisqa`,
   laid out as in the [systemd](#systemd) example. Where systemd runs, it
   writes the unit of that example, enables the service and starts it;
-  where OpenRC runs, the script of the [OpenRC](#openrc) example,
-  likewise. It then waits up to 10 seconds for `/healthz`, and fails if
-  qisqa does not answer. Where neither runs, it makes no service and says
-  how to start qisqa by hand.
+  where there is no systemd but `rc-service` is there, the script of the
+  [OpenRC](#openrc) example, likewise. It then waits up to 10 seconds for
+  `/healthz`, and fails if qisqa does not answer. Where there is neither,
+  it makes no service and says how to start qisqa by hand.
 - **On macOS, with `--user`, or without root**, it installs for the
   current user into `~/qisqa`, mode 700: the binary, the documents and the
   same `config.yaml`, and no service. A missing tool is then an error.
@@ -44,8 +44,10 @@ Its last lines give the version, where the config is, and the commands
 that add a domain and an account, in the form for that install. It writes
 `config.yaml` only where there is none: a second run installs the binary
 and the documents again, keeps `config.yaml` and the data folder as they
-are, and restarts the service. It installs into a folder that is there only
-when root owns it and nobody else may write to it.
+are, and restarts the service. It does not install into a folder that is
+there and holds other files but no `qisqa`, and a system install uses a
+folder that is there only when root owns it and nobody else may write to
+it.
 
 | Option | Meaning |
 |---|---|
@@ -53,6 +55,11 @@ when root owns it and nobody else may write to it.
 | `--version 0.1.0` | The release to install. Default: the latest. |
 | `--dir PATH` | The folder to install into. Default: `/opt/qisqa`, or `~/qisqa` for the current user. |
 | `--help` | Show the options. |
+
+Where systemd runs, a system install refuses a folder under `/usr`, `/boot`,
+`/efi` or `/etc`, which the unit makes read-only for qisqa, under `/home`,
+`/root` or `/run/user`, which it hides, and elsewhere under `/run`, which is
+emptied at every boot; for a folder in your home, use `--user`.
 
 Through the pipe, the options come after `sh -s --`:
 
