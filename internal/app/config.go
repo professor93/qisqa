@@ -27,6 +27,7 @@ type Config struct {
 	MinLength      int         `yaml:"min_length"`
 	DefaultTTL     Duration    `yaml:"default_ttl"`
 	ShortURLFormat string      `yaml:"short_url_format"`
+	BareURLZones   string      `yaml:"bare_url_zones"`
 	FallbackURL    string      `yaml:"fallback_url"`
 	Cache          CacheConfig `yaml:"cache"`
 	NotFoundLimit  LimitConfig `yaml:"not_found_limit"`
@@ -128,6 +129,13 @@ func (c *Config) finish() error {
 	if !slices.Contains(shortURLFormats, c.ShortURLFormat) {
 		return fmt.Errorf("short_url_format: %q must be one of %s",
 			c.ShortURLFormat, strings.Join(shortURLFormats, ", "))
+	}
+	if c.BareURLZones == "" {
+		c.BareURLZones = "top100"
+	}
+	if !slices.Contains(bareURLZoneTiers, c.BareURLZones) {
+		return fmt.Errorf("bare_url_zones: %q must be one of %s",
+			c.BareURLZones, strings.Join(bareURLZoneTiers, ", "))
 	}
 	if err := checkOptionalURL("fallback_url", c.FallbackURL); err != nil {
 		return err

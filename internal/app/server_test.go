@@ -27,6 +27,7 @@ func testConfig() *Config {
 		MinLength:      5,
 		DefaultTTL:     Dur(240 * time.Hour),
 		ShortURLFormat: "https",
+		BareURLZones:   "top100",
 		Cache:          CacheConfig{TTL: Dur(6 * time.Hour), MaxEntries: 100},
 		NotFoundLimit:  LimitConfig{PerMinute: 3, BlockFor: Dur(5 * time.Minute)},
 	}

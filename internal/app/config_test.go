@@ -98,6 +98,7 @@ func TestConfigRejects(t *testing.T) {
 		{"delete_expired_after", minimalYAML + "delete_expired_after: 30d\n", "delete_expired_after"},
 		{"bad fallback_url", minimalYAML + "fallback_url: not-a-url\n", "fallback_url"},
 		{"bad short_url_format", minimalYAML + "short_url_format: http\n", "short_url_format"},
+		{"bad bare_url_zones", minimalYAML + "bare_url_zones: top50\n", "bare_url_zones"},
 		{"zero default_ttl", minimalYAML + "default_ttl: \"0\"\n", "default_ttl"},
 		{"invalid default_ttl", minimalYAML + "default_ttl: 10x\n", "default_ttl"},
 		{"blacklist word too short", minimalYAML + "blacklist: [ab]\n", "blacklist"},
@@ -112,6 +113,23 @@ func TestConfigRejects(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := loadYAML(t, c.yaml)
 			wantErr(t, err, c.want)
+		})
+	}
+}
+
+// TestBareURLZonesConfig: bare_url_zones is top100 unless set, and may be
+// top500 or all.
+func TestBareURLZonesConfig(t *testing.T) {
+	for yaml, want := range map[string]string{
+		"":                         "top100",
+		"bare_url_zones: top100\n": "top100",
+		"bare_url_zones: top500\n": "top500",
+		"bare_url_zones: all\n":    "all",
+	} {
+		t.Run(yaml, func(t *testing.T) {
+			cfg, err := loadYAML(t, minimalYAML+yaml)
+			must(t, err)
+			eq(t, cfg.BareURLZones, want)
 		})
 	}
 }

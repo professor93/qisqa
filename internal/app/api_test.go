@@ -574,6 +574,8 @@ func TestWrongTypeErrorNamesTheField(t *testing.T) {
 		`{"url": 5}`:                             `"url" must be a string`,
 		`{"text": "x", "urls": "y"}`:             `"urls" must be a list of strings`,
 		`{"text": "x", "urls": [1]}`:             `"urls" must be a list of strings`,
+		`{"text": "x", "bare_urls": "yes"}`:      `"bare_urls" must be true or false`,
+		`{"text": "x", "bare_urls": 1}`:          `"bare_urls" must be true or false`,
 		`{"url": "x", "expires_after_open": 60}`: `"expires_after_open" must be a string`,
 	}
 	for body, want := range cases {

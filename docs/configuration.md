@@ -21,6 +21,7 @@ from the folder qisqa was started in.
 | `min_length` | `5` | Length of new codes, 3 to 10. | yes |
 | `default_ttl` | `10d` | Lifetime of a link created without `expires_in`. | yes |
 | `short_url_format` | `https` | Shape of `short_url` in API answers: `https`, `https_www`, `bare` or `www`. | yes |
+| `bare_url_zones` | `top100` | Which domain zones make a [URL without a scheme](links.md#urls-without-a-scheme) in a text sent with `bare_urls`: `top100`, `top500` or `all`. | yes |
 | `fallback_url` | empty | Where unknown hosts and unknown or expired codes are sent. Empty: a 404 page. | yes |
 | `cache.ttl` | `6h` | How long a link is served from memory before it is read from the data folder again. | no |
 | `cache.max_entries` | `10000` | How many links are kept in memory. | no |

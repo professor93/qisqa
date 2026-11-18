@@ -84,7 +84,10 @@ curl -X POST https://short.example/api/links \
 }
 ```
 
-See [Text mode](links.md#text-mode) for the rules.
+With `"bare_urls": true`, URLs written without a scheme, such as
+`example.com/page`, are replaced as well: see
+[URLs without a scheme](links.md#urls-without-a-scheme). See
+[Text mode](links.md#text-mode) for the other rules.
 
 ## Edit a link: `PATCH /api/links/{code}`
 

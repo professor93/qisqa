@@ -47,6 +47,13 @@ default_ttl: 10d
 #   www        www.short.example/aB3xK
 short_url_format: https
 
+# Which domain zones make a URL without a scheme, such as example.com/page,
+# in a text sent with "bare_urls": true:
+#   top100  the 100 zones that hold the most of the most visited sites
+#   top500  the 500 such zones
+#   all     every zone there is
+bare_url_zones: top100
+
 # Where to send requests for unknown hosts, and for unknown or expired codes
 # on a domain without a fallback URL of its own. Empty: show a 404 page.
 fallback_url: ""

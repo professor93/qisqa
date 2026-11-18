@@ -325,6 +325,15 @@ components:
             URL found in the text is shortened. A listed URL that may not be
             shortened is an error; one that does not occur in the text is
             still shortened. An empty list shortens nothing.
+        bare_urls:
+          type: boolean
+          default: false
+          description: |
+            Only with `text`: also shorten URLs written without a scheme,
+            such as `example.com/page`. A word is such a URL when its host
+            ends in a domain zone the service knows; its link leads to
+            `https://` and the word as written. Together with `urls` it
+            changes nothing.
         domain:
           type: string
           description: The short domain to create links on, one of the account's. Default, the account's first domain.

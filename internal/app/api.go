@@ -23,6 +23,7 @@ type createRequest struct {
 	URL              string   `json:"url"`
 	Text             string   `json:"text"`
 	URLs             []string `json:"urls"`
+	BareURLs         bool     `json:"bare_urls"`
 	Domain           string   `json:"domain"`
 	ExpiresIn        string   `json:"expires_in"`
 	ExpiresAfterOpen *string  `json:"expires_after_open"`
@@ -134,7 +135,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
 }
 
 // typeError says which field of a request body has the wrong JSON type.
-// Every field is a string, except "urls".
+// Every field is a string, except "urls" and "bare_urls".
 func typeError(err *json.UnmarshalTypeError) error {
 	field, _, _ := strings.Cut(err.Field, ".") // "urls.0" is an entry of "urls"
 	switch field {
@@ -142,6 +143,8 @@ func typeError(err *json.UnmarshalTypeError) error {
 		return errors.New("request body must be a JSON object")
 	case "urls":
 		return errors.New(`"urls" must be a list of strings`)
+	case "bare_urls":
+		return errors.New(`"bare_urls" must be true or false`)
 	}
 	return fmt.Errorf("%q must be a string", field)
 }
@@ -245,6 +248,10 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request, a *Account
 		writeError(w, http.StatusBadRequest, `"urls" is only valid together with "text"`)
 		return
 	}
+	if req.BareURLs {
+		writeError(w, http.StatusBadRequest, `"bare_urls" is only valid together with "text"`)
+		return
+	}
 	target, err := CheckTarget(req.URL, d, s.meta)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -267,7 +274,13 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request, a *Account
 // createFromText answers POST /api/links in text mode: every URL in the
 // text that is worth shortening is replaced by a short link.
 func (s *Server) createFromText(w http.ResponseWriter, r *http.Request, a *Account, cfg *Config, req createRequest, opts createOptions) {
-	written, targets, err := s.textTargets(cfg, req, opts)
+	// The zones by which URLs without a scheme are found; nil finds none.
+	// A list of URLs names what to shorten, so nothing else is looked for.
+	var zones map[string]bool
+	if req.BareURLs && req.URLs == nil {
+		zones = bareZones(cfg.BareURLZones)
+	}
+	targets, written, err := s.textTargets(cfg, req, opts, zones)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -277,12 +290,14 @@ func (s *Server) createFromText(w http.ResponseWriter, r *http.Request, a *Accou
 		s.internalError(w, "shorten text", err)
 		return
 	}
-	short := make(map[string]string, len(links))
-	for i, link := range links {
-		short[written[i]] = link.ShortURL
+	short := make(map[string]string, len(written))
+	for u, i := range written {
+		short[u] = links[i].ShortURL
+	}
+	for _, link := range links {
 		s.logEvent(r, a, "create", link.Domain, link.Code)
 	}
-	writeJSON(w, http.StatusOK, textResponse{Text: ReplaceURLs(req.Text, short), Links: links})
+	writeJSON(w, http.StatusOK, textResponse{Text: ReplaceURLs(req.Text, short, zones), Links: links})
 }
 
 // handlePatch answers PATCH /api/links/{code}?domain=...

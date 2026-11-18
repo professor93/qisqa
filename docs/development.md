@@ -17,6 +17,13 @@ YAML parser, and the IDNA tables of `golang.org/x/net` (with the
 `golang.org/x/text` tables they need) that turn a target host with letters
 outside ASCII into its `xn--` form.
 
+`internal/app/zones.txt` is the list of domain zones by which text mode
+knows a URL written without a scheme. `make zones` makes it again from the
+IANA list of zones and the Tranco list of the million most visited sites,
+the zones that hold the most sites first. The values of `bare_url_zones`
+are its first 100 lines, its first 500 and all of them, so look at which
+zones moved across those two lines before you commit a new file.
+
 ## Making a release
 
 A release is made by pushing a version tag. The release workflow builds the

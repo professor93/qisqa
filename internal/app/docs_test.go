@@ -583,7 +583,7 @@ func TestOpenAPISchemasMatchTypes(t *testing.T) {
 }
 
 func TestDocsMentionEveryField(t *testing.T) {
-	fields := strings.Fields("url text urls domain expires_in expires_after_open password format " +
+	fields := strings.Fields("url text urls bare_urls domain expires_in expires_after_open password format " +
 		"code short_url expires_at secured created error links")
 	for _, name := range []string{"internal/app/web/llms.txt", "internal/app/web/openapi.yaml"} {
 		doc := readDoc(t, name)

@@ -136,51 +136,66 @@ func codeLength(cfg *Config) int {
 	return max(minCodeLength, cfg.MinLength)
 }
 
-// textTargets lists the URLs a text-mode request turns into links, in the
-// order the links are returned: each as written, which is what the text
-// holds, and its target, which CheckTarget returned for it. The error is
-// written for the API caller.
+// textTargets lists what a text-mode request turns into links: the
+// targets, which CheckTarget returned, in the order the links are returned,
+// and for every URL as the text writes it the place of its target among
+// them. Two spellings of one target, such as with and without its scheme,
+// share one link. The error is written for the API caller.
 //
-// Without "urls" the targets are the URLs found in the text, in order of
-// first appearance. A URL that may not be shortened, or whose short form
-// would not be shorter than the URL itself, is not a target: it simply
-// stays in the text.
+// Without "urls" the targets are those of the URLs found in the text, in
+// order of first appearance; zones says which URLs without a scheme count
+// (nil: none), and such a URL gets https:// in front. A URL that may not be
+// shortened, or whose short form would not be shorter than the URL as
+// written, is not a target: it simply stays in the text.
 //
 // With "urls" the targets are exactly that list, repeats removed, whether
 // or not the text contains them; an entry that may not be shortened is an
 // error.
-func (s *Server) textTargets(cfg *Config, req createRequest, opts createOptions) (written, targets []string, err error) {
+func (s *Server) textTargets(cfg *Config, req createRequest, opts createOptions, zones map[string]bool) (targets []string, written map[string]int, err error) {
 	if len(req.Text) > maxTextLength {
 		return nil, nil, errors.New("text is larger than 10 KB")
 	}
+	written = map[string]int{}
+	place := map[string]int{} // of each target in targets
+	add := func(u, target string) {
+		i, known := place[target]
+		if !known {
+			i = len(targets)
+			place[target] = i
+			targets = append(targets, target)
+		}
+		written[u] = i
+	}
 	if req.URLs != nil {
-		seen := map[string]bool{}
 		for _, u := range req.URLs {
-			if seen[u] {
+			if _, seen := written[u]; seen {
 				continue
 			}
-			seen[u] = true
 			target, err := CheckTarget(u, opts.domain, s.meta)
 			if err != nil {
 				return nil, nil, fmt.Errorf("urls: %q: %w", u, err)
 			}
-			written, targets = append(written, u), append(targets, target)
+			add(u, target)
 		}
 	} else {
 		shortLength := len(ShortURL(opts.format, opts.domain.Host, "")) + codeLength(cfg)
-		for _, u := range FindURLs(req.Text) {
+		for _, u := range FindURLs(req.Text, zones) {
 			if len(u) <= shortLength {
 				continue
 			}
-			if target, err := CheckTarget(u, opts.domain, s.meta); err == nil {
-				written, targets = append(written, u), append(targets, target)
+			raw := u
+			if !hasScheme(u) {
+				raw = "https://" + u
+			}
+			if target, err := CheckTarget(raw, opts.domain, s.meta); err == nil {
+				add(u, target)
 			}
 		}
 	}
 	if len(targets) > maxTextURLs {
 		return nil, nil, fmt.Errorf("%d URLs to shorten; one request may shorten at most %d", len(targets), maxTextURLs)
 	}
-	return written, targets, nil
+	return targets, written, nil
 }
 
 // ShortURL builds the short URL for a code in one of the four formats:

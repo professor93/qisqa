@@ -132,8 +132,10 @@ curl -X POST https://short.example/api/links \
 
 Send `text` instead of `url` and qisqa replaces the URLs inside it:
 
-- Only URLs that start with `http://` or `https://` are replaced. Punctuation
-  after a URL stays in the text.
+- Only URLs that start with `http://` or `https://` are replaced, unless the
+  request sets `bare_urls`: see
+  [URLs without a scheme](#urls-without-a-scheme). Punctuation after a URL
+  stays in the text.
 - A URL that already points at one of the service's own short domains, with
   or without `www.`, is never replaced: a short link is not shortened again.
 - A URL that may not be shortened, or whose short link would not be shorter
@@ -144,3 +146,29 @@ Send `text` instead of `url` and qisqa replaces the URLs inside it:
 - `domain`, `expires_in`, `expires_after_open`, `password` and `format`
   apply to every link of the text.
 - Limits: 10 KB of text and 20 links per request.
+
+### URLs without a scheme
+
+With `"bare_urls": true` in the request, a URL written without a scheme,
+such as `example.com/page`, is replaced too. Its link leads to `https://`
+and the URL as written.
+
+- A word is such a URL when it stands at the start of the text, after a
+  space, or after an opening bracket or quote, and its host ends in a domain
+  zone that qisqa knows: `example.com`, `www.example.org/a?b=1`,
+  `example.com:8080/x`. So `file.txt`, `12.05.2026`, `v1.2` and an e-mail
+  address stay as they are.
+- `bare_url_zones` in the config says which zones qisqa knows: `top100` (the
+  default), `top500` or `all`. The zones are ordered by how many of the
+  million most visited sites each one holds: the first 100 hold about 95 %
+  of those sites, the first 500 nearly all of them.
+- The other rules of text mode hold. A URL that is not longer than its short
+  link stays, where the length is that of the URL as written. One of the
+  service's own short links is never shortened again. The same URL written
+  with and without its scheme becomes one link.
+- Where the space after a full stop is missing, two words can look like a
+  host: in `he came.Biz is` the word `came.Biz` ends in the zone `biz`, and
+  is replaced if it is longer than its short link. Fewer zones make fewer
+  such cases, which is why the default is the first 100.
+- With `urls`, `bare_urls` changes nothing: the list names the URLs to
+  shorten, each with its scheme.

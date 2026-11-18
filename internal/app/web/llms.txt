@@ -92,6 +92,7 @@ links.
 |---|---|---|
 | `text` | yes | The text, at most 10 KB. |
 | `urls` | no | Exactly which URLs to shorten. Without it, every URL found in the text is shortened. |
+| `bare_urls` | no | `true`: also shorten URLs written without a scheme, such as `example.com/page`. Default `false`. Changes nothing together with `urls`. |
 | `domain`, `expires_in`, `expires_after_open`, `password`, `format` | no | As for a single link; applied to every link of the text. |
 
 ```sh
@@ -124,7 +125,16 @@ The answer is always `200`:
 How URLs are found and replaced:
 
 - Only URLs that start with `http://` or `https://` are found. `example.com/page`
-  without a scheme is left alone.
+  without a scheme is left alone, unless the request sets `bare_urls` to
+  `true`.
+- With `bare_urls`: a word that stands at the start of the text, after a
+  space, or after an opening bracket or quote is a URL too when its host
+  ends in a domain zone the service knows, as in `example.com/page`,
+  `www.example.org/a?b=1` or `example.com:8080/x`. Its link leads to
+  `https://` and the word as written, and `url` in `links` is that address.
+  `file.txt`, `12.05.2026`, `v1.2` and e-mail addresses are no URLs. The
+  service knows the 100 most used zones unless its operator chose more. The
+  same URL written with and without its scheme is one link.
 - Punctuation after a URL (`. , ; : ! ? ) ] } " '` and punctuation outside
   ASCII such as `» ” …`) is not part of the URL and stays in the text. A
   closing bracket that matches a bracket opened inside the URL, as in
