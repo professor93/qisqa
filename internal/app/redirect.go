@@ -49,7 +49,9 @@ func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		// Not the client's fault: no strike, and nothing is cached.
 		slog.Error("redirect lookup failed", "domain", d.Host, "code", code, "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		if !s.ownErrorPage(w, r, http.StatusInternalServerError, "500") {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
 	case state == LinkUnknown:
 		s.notFound(w, r, d, true) // a code never handed out is a guess
 	case state == LinkGone || !s.live(link, now):

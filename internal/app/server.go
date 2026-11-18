@@ -91,8 +91,9 @@ func (s *Server) Handler() http.Handler {
 }
 
 // routes builds the request router. A blocked client gets 429 for
-// everything except the health check. Every response, whatever answers it,
-// leaves with the signature header.
+// everything except the health check: the operator's page for it in a
+// browser, JSON otherwise. Every response, whatever answers it, leaves with
+// the signature header.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -116,7 +117,9 @@ func (s *Server) routes() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header()[signatureHeader] = signatureValue
 		if r.URL.Path != "/healthz" && s.limiter.Blocked(s.clientIP(r), s.now()) {
-			writeError(w, http.StatusTooManyRequests, "too many requests")
+			if !s.ownErrorPage(w, r, http.StatusTooManyRequests, "429") {
+				writeError(w, http.StatusTooManyRequests, "too many requests")
+			}
 			return
 		}
 		mux.ServeHTTP(w, r)
@@ -201,14 +204,39 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, target string)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
-// page serves one built-in HTML page with the given status, and the
-// signature comment after it.
+// page serves one HTML page with the given status: the operator's own page
+// in the place of the built-in one of that name when there is one.
 func (s *Server) page(w http.ResponseWriter, status int, name string) {
-	data, err := webFS.ReadFile("web/" + name)
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+	data := s.cfg.Pages().page(strings.TrimSuffix(name, ".html"))
+	if data == nil {
+		var err error
+		if data, err = webFS.ReadFile("web/" + name); err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
+	writePage(w, status, data)
+}
+
+// ownErrorPage answers a GET or HEAD outside the API with the operator's
+// page of that name, and reports whether it did. Every other request, and
+// one for which there is no such page, keeps the answer its caller gives:
+// programs read those, and so do the pages of secured and password links.
+func (s *Server) ownErrorPage(w http.ResponseWriter, r *http.Request, status int, name string) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead || strings.HasPrefix(r.URL.Path, "/api/") {
+		return false
+	}
+	data := s.cfg.Pages().page(name)
+	if data == nil {
+		return false
+	}
+	writePage(w, status, data)
+	return true
+}
+
+// writePage sends an HTML page that is neither cached nor indexed, and the
+// signature comment after it.
+func writePage(w http.ResponseWriter, status int, data []byte) {
 	private(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
