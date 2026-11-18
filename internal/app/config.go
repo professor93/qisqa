@@ -28,6 +28,7 @@ type Config struct {
 	DefaultTTL     Duration    `yaml:"default_ttl"`
 	ShortURLFormat string      `yaml:"short_url_format"`
 	BareURLZones   string      `yaml:"bare_url_zones"`
+	TrimCodes      bool        `yaml:"trim_codes"`
 	FallbackURL    string      `yaml:"fallback_url"`
 	Pages          PagesConfig `yaml:"pages"`
 	Cache          CacheConfig `yaml:"cache"`
@@ -85,8 +86,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	// Defaults of keys whose 0 means something are set before the file is
-	// read: archive_days 0 is no archive, and plain_days 0 is refused.
-	c := Config{Log: LogConfig{PlainDays: 7, ArchiveDays: 30}}
+	// read: archive_days 0 is no archive, plain_days 0 is refused, and
+	// trim_codes false is off.
+	c := Config{TrimCodes: true, Log: LogConfig{PlainDays: 7, ArchiveDays: 30}}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {

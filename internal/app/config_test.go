@@ -137,6 +137,15 @@ func TestBareURLZonesConfig(t *testing.T) {
 	}
 }
 
+// TestTrimCodesConfig: trim_codes is on unless the file turns it off.
+func TestTrimCodesConfig(t *testing.T) {
+	for yaml, want := range map[string]bool{"": true, "trim_codes: true\n": true, "trim_codes: false\n": false} {
+		cfg, err := loadYAML(t, minimalYAML+yaml)
+		must(t, err)
+		eq(t, cfg.TrimCodes, want)
+	}
+}
+
 // TestPagesConfig: pages names a folder and a path per page; a page's name
 // may be written as a number or as a string.
 func TestPagesConfig(t *testing.T) {

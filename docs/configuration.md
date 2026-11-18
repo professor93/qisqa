@@ -22,6 +22,7 @@ and `pages.files`, is taken from the folder qisqa was started in.
 | `default_ttl` | `10d` | Lifetime of a link created without `expires_in`. | yes |
 | `short_url_format` | `https` | Shape of `short_url` in API answers: `https`, `https_www`, `bare` or `www`. | yes |
 | `bare_url_zones` | `top100` | Which domain zones make a [URL without a scheme](links.md#urls-without-a-scheme) in a text sent with `bare_urls`: `top100`, `top500` or `all`. | yes |
+| `trim_codes` | `true` | Open a short link written with something glued after its code: `short.example/aB3xK.` opens `aB3xK`. See [Something glued to a link](links.md#something-glued-to-a-link). `false`: such a link is not found. | yes |
 | `fallback_url` | empty | Where unknown hosts and unknown or expired codes are sent. Empty: a 404 page. | yes |
 | `pages.dir` | empty | A folder that holds [your own pages](#your-own-pages): `index.html`, `404.html`, `429.html` and `500.html`. | yes |
 | `pages.files` | empty | A path for one of your own pages, under its name: `index`, `404`, `429` or `500`. It wins over `pages.dir`. | yes |

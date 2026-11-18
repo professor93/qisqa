@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // codePattern is what a code or static alias can look like. Anything else
@@ -25,7 +27,7 @@ func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r, nil, false)
 		return
 	}
-	code := r.PathValue("code")
+	code := s.codeOf(r.PathValue("code"))
 	if !codePattern.MatchString(code) {
 		s.page(w, http.StatusNotFound, "404.html")
 		return
@@ -80,7 +82,7 @@ func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	const gone = "link not found or expired"
 	d := s.meta.Domain(r.Host)
-	code := r.PathValue("code")
+	code := s.codeOf(r.PathValue("code"))
 	if d == nil || !codePattern.MatchString(code) {
 		writeError(w, http.StatusNotFound, gone)
 		return
@@ -230,4 +232,42 @@ func earliest(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// trimCode returns what was written after the domain up to its first space,
+// punctuation mark, symbol or invisible character: what people and their
+// phones glue to a link, "qwert." or "qwert )" or "qwert/". "-" and "_"
+// belong to codes and aliases. A letter of any script is no cut, so that a
+// code with a look-alike letter in it stays unknown instead of leading to
+// another link.
+func trimCode(written string) string {
+	for i, r := range written {
+		if r == '-' || r == '_' {
+			continue
+		}
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) ||
+			unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return written[:i]
+		}
+	}
+	return written
+}
+
+// browserFile reports whether a path is one that browsers ask every site for
+// by themselves. Such a path is never cut down to a code: a visitor's
+// browser asking for its icon must not count as a guess.
+func browserFile(written string) bool {
+	return written == "favicon.ico" || written == "browserconfig.xml" ||
+		strings.HasPrefix(written, "apple-touch-icon") && strings.HasSuffix(written, ".png")
+}
+
+// codeOf returns the code a request names: the path after the domain, cut
+// as trimCode does when trim_codes is on. A cut code that is unknown counts
+// against the client like any other: otherwise a guesser would glue "." to
+// every guess and never be blocked.
+func (s *Server) codeOf(written string) string {
+	if !s.cfg.Config().TrimCodes || browserFile(written) {
+		return written
+	}
+	return trimCode(written)
 }

@@ -139,7 +139,10 @@ func TestRedirectInvalidPathIsNotAStrike(t *testing.T) {
 	code, target := live(t, s)
 
 	for range 10 {
-		for _, path := range []string{"/favicon.ico", "/a", "/a/b"} {
+		for _, path := range []string{
+			"/favicon.ico", "/a", "/a/b", "/browserconfig.xml",
+			"/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/apple-touch-icon-120x120-precomposed.png",
+		} {
 			status(t, do(s, "GET", "short.example", path), http.StatusNotFound)
 		}
 	}
@@ -423,4 +426,107 @@ func TestHealthz(t *testing.T) {
 	w = do(s, "GET", "localhost:8080", "/healthz")
 	status(t, w, http.StatusOK)
 	eq(t, strings.TrimSpace(w.Body.String()), `{"status":"ok"}`)
+}
+
+// TestTrimCode: a code is cut at the first space, punctuation mark, symbol
+// or invisible character; letters of any script, digits, "-" and "_" are
+// no cut.
+func TestTrimCode(t *testing.T) {
+	for written, want := range map[string]string{
+		"qwert":        "qwert",
+		"qw-er_t":      "qw-er_t",
+		"qwert.":       "qwert",
+		"qwert .":      "qwert",
+		"qwert,":       "qwert",
+		"qwert!":       "qwert",
+		"qwert?":       "qwert",
+		"qwert;":       "qwert",
+		"qwert:":       "qwert",
+		"qwert)":       "qwert",
+		"qwert]":       "qwert",
+		"qwert}":       "qwert",
+		`qwert"`:       "qwert",
+		"qwert'":       "qwert",
+		"qwert»":       "qwert",
+		"qwert”":       "qwert",
+		"qwert’":       "qwert",
+		"qwert…":       "qwert",
+		"qwert/":       "qwert",
+		"qwert/abc":    "qwert",
+		"qwert.Rahmat": "qwert",
+		"qwert\u00a0":  "qwert",
+		"qwert\u200b":  "qwert",
+		"qwert\ufeff":  "qwert",
+		"qwert\t":      "qwert",
+		"qwert+":       "qwert",
+		"qwert|":       "qwert",
+		"qwert~":       "qwert",
+		"qwertо":       "qwertо", // a Cyrillic о is a letter, not a cut
+		"qwertй.":      "qwertй",
+		".qwert":       "",
+		" qwert":       "",
+		"":             "",
+	} {
+		if got := trimCode(written); got != want {
+			t.Errorf("trimCode(%q) = %q, want %q", written, got, want)
+		}
+	}
+}
+
+// TestTrimmedCodesOpen: a short link with something glued after its code
+// opens the link, with one request and no redirect to a clean address.
+func TestTrimmedCodesOpen(t *testing.T) {
+	s, _ := newTestServer(t)
+	code, target := live(t, s)
+	for _, tail := range []string{
+		".", "%20.", ",", ")", "%22", "'", "%E2%80%A6", "%C2%BB", "%E2%80%9D",
+		"%E2%80%8B", "%C2%A0", "%20", "/", "/abc", "/.", ".Rahmat", "!", "?x=1",
+	} {
+		w := do(s, "GET", "short.example", "/"+code+tail)
+		if w.Code == http.StatusMovedPermanently || w.Code == http.StatusTemporaryRedirect {
+			// The router cleans "/." itself and sends there first.
+			w = do(s, "GET", "short.example", w.Header().Get("Location"))
+		}
+		if w.Code != http.StatusFound || w.Header().Get("Location") != target {
+			t.Errorf("%q: status %d to %q, want a redirect to %q", tail, w.Code, w.Header().Get("Location"), target)
+		}
+	}
+	status(t, do(s, "HEAD", "short.example", "/"+code+"."), http.StatusFound)
+	// A static alias, which may hold "-" and "_".
+	redirectsTo(t, do(s, "GET", "go.example", "/android."), "https://example.com/android")
+	redirectsTo(t, do(s, "GET", "go.example", "/ANDROID%20."), "https://example.com/android")
+}
+
+// TestTrimmedCodesNeverLeadElsewhere: a letter of another script, or a
+// cut that leaves fewer than three characters, gives no link.
+func TestTrimmedCodesNeverLeadElsewhere(t *testing.T) {
+	s, _ := newTestServer(t)
+	code, _ := live(t, s)
+	for _, path := range []string{"/" + code + "%D0%BE", "/" + code[:2] + ".", "/." + code, "/%20" + code} {
+		status(t, do(s, "GET", "short.example", path), http.StatusNotFound)
+	}
+}
+
+// TestTrimmedUnknownCodesStrike: a cut code that is unknown counts against
+// the client like any guess, or a guesser would add "." to every guess.
+func TestTrimmedUnknownCodesStrike(t *testing.T) {
+	s, _ := newTestServer(t)
+	code, _ := live(t, s)
+	for i := range 4 {
+		status(t, do(s, "GET", "short.example", fmt.Sprintf("/none%d.", i)), http.StatusNotFound)
+	}
+	status(t, do(s, "GET", "short.example", "/"+code), http.StatusTooManyRequests)
+}
+
+// TestTrimCodesOff: with trim_codes off, what follows a code makes it no
+// code, as before, and no strike.
+func TestTrimCodesOff(t *testing.T) {
+	s, _ := newTestServer(t, func(c *Config) { c.TrimCodes = false })
+	code, target := live(t, s)
+	for range 5 {
+		for _, tail := range []string{".", "%20.", "/", ")"} {
+			status(t, do(s, "GET", "short.example", "/"+code+tail), http.StatusNotFound)
+		}
+	}
+	redirectsTo(t, do(s, "GET", "short.example", "/"+code), target)
 }

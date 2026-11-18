@@ -112,7 +112,7 @@ func (s *Server) routes() http.Handler {
 		writeError(w, http.StatusNotFound, "unknown API endpoint")
 	})
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { s.page(w, http.StatusNotFound, "404.html") })
+	mux.HandleFunc("/", s.handleOther)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header()[signatureHeader] = signatureValue
@@ -124,6 +124,25 @@ func (s *Server) routes() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// handleOther answers every path that no route takes: a 404 page, or, with
+// trim_codes on, a code followed by "/" and maybe more, such as "/qwert/",
+// which is the link of that code. The API's paths never come here.
+func (s *Server) handleOther(w http.ResponseWriter, r *http.Request) {
+	written := strings.TrimPrefix(r.URL.Path, "/")
+	if s.cfg.Config().TrimCodes && strings.Contains(written, "/") {
+		r.SetPathValue("code", written)
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			s.handleRedirect(w, r)
+			return
+		case http.MethodPost:
+			s.handleOpen(w, r)
+			return
+		}
+	}
+	s.page(w, http.StatusNotFound, "404.html")
 }
 
 // SweepLimiter forgets clients the limiter no longer needs to remember, and

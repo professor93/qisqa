@@ -696,3 +696,18 @@ func TestSecuredOpenLogged(t *testing.T) {
 	eq(t, len(lines), 1)
 	eq(t, lines[0], "open\tshort.example\t"+code+"\t203.0.113.7\t") // no account
 }
+
+// TestTrimmedCodesOpenSecuredAndPasswordLinks: the page that a secured or
+// password link shows posts to the address as it was written, with what is
+// glued to the code; that post opens the link too.
+func TestTrimmedCodesOpenSecuredAndPasswordLinks(t *testing.T) {
+	s, _ := newTestServer(t)
+	open, openTarget := secured(t, s, time.Minute)
+	locked, lockedTarget := passwordLink(t, s, nil)
+
+	status(t, do(s, "GET", "short.example", "/"+open+"."), http.StatusOK)
+	opensTo(t, do(s, "POST", "short.example", "/"+open+"%20."), openTarget)
+
+	status(t, do(s, "GET", "short.example", "/"+locked+"/"), http.StatusOK)
+	opensTo(t, do(s, "POST", "short.example", "/"+locked+"/", withPassword(testPassword)), lockedTarget)
+}

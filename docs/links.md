@@ -65,6 +65,30 @@ keep working.
   every request. Wrong API tokens and wrong passwords count as well. Expired
   links do not count: those are real people opening an old link.
 
+### Something glued to a link
+
+People and phones glue things to a short link: the full stop of the
+sentence, a bracket, a quote, a space, a slash. With `trim_codes` on, the
+default, the code ends at the first space, punctuation mark, symbol or
+invisible character, so all of these open `aB3xK`:
+
+```
+short.example/aB3xK.     short.example/aB3xK .    short.example/aB3xK,
+short.example/aB3xK)     short.example/aB3xK"     short.example/aB3xK…
+short.example/aB3xK/     short.example/aB3xK.Thanks
+```
+
+- The link opens at once, with no redirect to the clean address. Secured
+  and password links open the same way.
+- `-` and `_` belong to codes and aliases and are no end. Neither is a
+  letter of another alphabet: `aB3xKо` with a Cyrillic `о` is not found,
+  so nobody is led to another link by a look-alike letter.
+- A code that is not found after the cut counts as a code that does not
+  exist, as above: otherwise a client could guess codes without limit by
+  gluing `.` to each.
+- `favicon.ico`, `apple-touch-icon….png` and `browserconfig.xml`, which
+  browsers ask for by themselves, are never cut.
+
 ## Secured links
 
 A link created with `expires_after_open` is *secured*:

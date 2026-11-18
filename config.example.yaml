@@ -54,6 +54,12 @@ short_url_format: https
 #   all     every zone there is
 bare_url_zones: top100
 
+# Open a short link written with something glued after its code, as people
+# and phones do: short.example/aB3xK. or short.example/aB3xK ) or
+# short.example/aB3xK/ open short.example/aB3xK. The code ends at the first
+# space, punctuation mark or symbol. false: such a link is not found.
+trim_codes: true
+
 # Where to send requests for unknown hosts, and for unknown or expired codes
 # on a domain without a fallback URL of its own. Empty: show a 404 page.
 fallback_url: ""
