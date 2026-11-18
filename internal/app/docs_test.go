@@ -597,12 +597,14 @@ func TestDocsMentionEveryField(t *testing.T) {
 
 // TestRepositoryUsesOnlyExampleDomains reads every text file of the
 // repository: a URL in code, tests or documents may only name a domain
-// reserved for examples.
+// reserved for examples, this repository's own addresses, or one of the two
+// lists that the Makefile makes zones.txt from.
 func TestRepositoryUsesOnlyExampleDomains(t *testing.T) {
 	urls := regexp.MustCompile(`https?://([A-Za-z0-9.-]+)`)
 	fullName := regexp.MustCompile(`\.[a-z]{2,}$`) // "www" alone is code, not a host
 	allowed := func(host string) bool {
 		return host == "github.com" || host == "raw.githubusercontent.com" ||
+			host == "data.iana.org" || host == "tranco-list.eu" || // where "make zones" reads its lists
 			host == "example.com" || strings.HasSuffix(host, ".example.com") ||
 			host == "example.org" || strings.HasSuffix(host, ".example.org") ||
 			strings.HasSuffix(host, ".example")
