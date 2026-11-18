@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"hash/maphash"
+	"io"
 	"net"
 	"net/http"
 	"runtime"
@@ -90,7 +91,8 @@ func (s *Server) Handler() http.Handler {
 }
 
 // routes builds the request router. A blocked client gets 429 for
-// everything except the health check.
+// everything except the health check. Every response, whatever answers it,
+// leaves with the signature header.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -112,6 +114,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { s.page(w, http.StatusNotFound, "404.html") })
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header()[signatureHeader] = signatureValue
 		if r.URL.Path != "/healthz" && s.limiter.Blocked(s.clientIP(r), s.now()) {
 			writeError(w, http.StatusTooManyRequests, "too many requests")
 			return
@@ -198,7 +201,8 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, target string)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
-// page serves one built-in HTML page with the given status.
+// page serves one built-in HTML page with the given status, and the
+// signature comment after it.
 func (s *Server) page(w http.ResponseWriter, status int, name string) {
 	data, err := webFS.ReadFile("web/" + name)
 	if err != nil {
@@ -209,6 +213,7 @@ func (s *Server) page(w http.ResponseWriter, status int, name string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	w.Write(data)
+	io.WriteString(w, signatureComment)
 }
 
 // document returns a handler that serves one built-in text file as it is:
