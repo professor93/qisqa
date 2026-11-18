@@ -873,3 +873,32 @@ func TestRunDataFlagNeedsACommand(t *testing.T) {
 		t.Errorf("stderr does not explain -data: %s", stderr.String())
 	}
 }
+
+// TestRunStartsWithABrokenPage: a page that cannot be one never stops the
+// service. It starts with the built-in pages, says why, and redirects.
+func TestRunStartsWithABrokenPage(t *testing.T) {
+	f := newFixture(t, "")
+	pages := pagesFolder(t, map[string]string{"index.html": "<p>our home</p>"})
+	must(t, os.Mkdir(filepath.Join(pages, "404.html"), 0o755))
+	config, err := os.ReadFile(f.config)
+	must(t, err)
+	must(t, os.WriteFile(f.config, append(config, pagesYAML(pages)...), 0o644))
+
+	p := startProgram(f.config)
+	defer p.stop()
+	waitHealthy(t, p, f.address)
+	response, body := f.request(t, "GET", "/", "")
+	eq(t, response.StatusCode, http.StatusOK)
+	eq(t, body, builtIn(t, "index.html")+signatureComment)
+	code := f.createLink(t, "https://example.com/with/a/broken/page")
+	response, _ = f.request(t, "GET", "/"+code, "")
+	eq(t, response.StatusCode, http.StatusFound)
+
+	p.stop()
+	eq(t, p.exitCode(t, 15*time.Second), 0)
+	for _, want := range []string{"404.html", pagesFailed} {
+		if !strings.Contains(p.stderr.String(), want) {
+			t.Errorf("stderr does not say %q: %s", want, p.stderr.String())
+		}
+	}
+}

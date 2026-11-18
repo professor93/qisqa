@@ -217,18 +217,97 @@ func TestWatcherLoadsPagesAtStart(t *testing.T) {
 	}
 }
 
-// TestWatcherStartFailsOnABrokenPage: at start a page that cannot be a page
-// is an error, which ends the program.
-func TestWatcherStartFailsOnABrokenPage(t *testing.T) {
-	dir := t.TempDir()
+// pagesFailed is what the log says when the pages did not load.
+const pagesFailed = "own pages did not load"
+
+// TestWatcherStartsWithABrokenPage: at start a page that cannot be a page
+// is said once in the log, there are no pages, and when it is repaired the
+// pages load.
+func TestWatcherStartsWithABrokenPage(t *testing.T) {
+	log := watchLog(t)
+	dir := pagesFolder(t, map[string]string{"index.html": "home"})
 	must(t, os.Mkdir(filepath.Join(dir, "404.html"), 0o755))
 	path := writeFile(t, t.TempDir(), "config.yaml", pagesYAML(dir))
 	cfg, err := LoadConfig(path)
 	must(t, err)
-	err = NewWatcher(path, cfg).LoadPages()
+	w := NewWatcher(path, cfg)
+	err = w.LoadPages()
 	if err == nil || !strings.Contains(err.Error(), "404.html") {
 		t.Fatalf("LoadPages gave %v, want an error that names 404.html", err)
 	}
+	eq(t, log.count("level=ERROR"), 1)
+	eq(t, log.count(pagesFailed), 1)
+	if !pageIs(w, "index", "")() || !pageIs(w, "404", "")() {
+		t.Fatal("there are pages though one of them is broken")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go w.Run(ctx, 10*time.Millisecond)
+	must(t, os.Remove(filepath.Join(dir, "404.html")))
+	waitFor(t, "the pages after the repair", pageIs(w, "index", "home"))
+	eq(t, log.count("level=ERROR"), 1)
+}
+
+// TestWatcherTriesAgainWhileThePagesAreBroken: a repair that changes
+// neither the time nor the size of a file is seen too, and while the pages
+// are broken the error is logged once, not at every try.
+func TestWatcherTriesAgainWhileThePagesAreBroken(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every file")
+	}
+	log := watchLog(t)
+	dir := pagesFolder(t, map[string]string{"404.html": "good"})
+	w, _ := startWatcher(t, pagesYAML(dir))
+
+	// A new page that qisqa may not read takes the place of the good one.
+	fresh := writeFile(t, t.TempDir(), "fresh", "repaired")
+	must(t, os.Chmod(fresh, 0o000))
+	must(t, os.Rename(fresh, filepath.Join(dir, "404.html")))
+	waitFor(t, "the error in the log", func() bool { return log.count(pagesFailed) > 0 })
+	time.Sleep(100 * time.Millisecond) // ten tries
+	eq(t, log.count("level=ERROR"), 1)
+	eq(t, string(w.Pages().page("404")), "good")
+
+	must(t, os.Chmod(filepath.Join(dir, "404.html"), 0o644))
+	waitFor(t, "the page after chmod", pageIs(w, "404", "repaired"))
+	eq(t, log.count("level=ERROR"), 1)
+}
+
+// TestWatcherLetsGoOfPagesWhenTheFolderIsRepaired: the config names a
+// folder that is a file, so the pages in use stay; when an empty folder
+// takes its place, which no stamp shows, the built-in pages come back.
+func TestWatcherLetsGoOfPagesWhenTheFolderIsRepaired(t *testing.T) {
+	log := watchLog(t)
+	good := pagesFolder(t, map[string]string{"404.html": "good"})
+	wrong := writeFile(t, t.TempDir(), "pages", "a file, not a folder")
+	w, path := startWatcher(t, pagesYAML(good))
+
+	rewrite(t, path, pagesYAML(wrong))
+	waitFor(t, "the error in the log", func() bool { return log.count(pagesFailed) > 0 })
+	eq(t, string(w.Pages().page("404")), "good")
+
+	must(t, os.Remove(wrong))
+	must(t, os.Mkdir(wrong, 0o755))
+	waitFor(t, "the built-in pages", pageIs(w, "404", ""))
+}
+
+// TestWatcherSaysLittleOfPages: a path that names no file is noted once,
+// not at every poll, and a config without pages says nothing of pages.
+func TestWatcherSaysLittleOfPages(t *testing.T) {
+	log := watchLog(t)
+	w, path := startWatcher(t, minimalYAML+"min_length: 6\n")
+	rewrite(t, path, minimalYAML+"min_length: 7\n")
+	waitFor(t, "the changed config", minLengthIs(w, 7))
+	time.Sleep(50 * time.Millisecond)
+	eq(t, log.count("pages"), 0)
+
+	missing := filepath.Join(t.TempDir(), "none.html")
+	rewrite(t, path, minimalYAML+fmt.Sprintf("pages:\n  files:\n    404: %q\n", missing))
+	waitFor(t, "the note of the missing file", func() bool { return log.count("level=WARN") > 0 })
+	time.Sleep(100 * time.Millisecond)
+	eq(t, log.count("level=WARN"), 1)
+	eq(t, log.count("none.html"), 1)
 }
 
 // TestWatcherReloadsAChangedPage: a page file that changes, goes away or
@@ -260,7 +339,7 @@ func TestWatcherKeepsPagesWhenAPageBreaks(t *testing.T) {
 	waitFor(t, "the error in the log", func() bool { return log.count("level=ERROR") > 0 })
 	time.Sleep(100 * time.Millisecond) // ten polls
 	eq(t, log.count("level=ERROR"), 1)
-	eq(t, log.count("keeping the running pages"), 1)
+	eq(t, log.count(pagesFailed), 1)
 	eq(t, string(w.Pages().page("404")), "good")
 
 	replaceFile(t, filepath.Join(dir, "404.html"), "repaired")
@@ -291,7 +370,7 @@ func TestWatcherAppliesAConfigWhosePagesAreBroken(t *testing.T) {
 	w, path := startWatcher(t, pagesYAML(good)+"min_length: 6\n")
 
 	rewrite(t, path, pagesYAML(broken)+"min_length: 7\n")
-	waitFor(t, "the error in the log", func() bool { return log.count("keeping the running pages") > 0 })
+	waitFor(t, "the error in the log", func() bool { return log.count(pagesFailed) > 0 })
 	eq(t, w.Config().MinLength, 7)
 	eq(t, string(w.Pages().page("404")), "good")
 

@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // PagesConfig names the operator's own pages: a folder that holds them
@@ -63,64 +63,45 @@ func (p *Pages) page(name string) []byte {
 	return nil
 }
 
-// pageFiles is where a page is read from: the folder, which is never left,
-// or the file system as it is, for a path the operator wrote.
-type pageFiles interface {
-	Stat(name string) (fs.FileInfo, error)
-	Open(name string) (*os.File, error)
+// count returns how many pages there are.
+func (p *Pages) count() (n int) {
+	if p == nil {
+		return 0
+	}
+	for _, page := range p.html {
+		if page != nil {
+			n++
+		}
+	}
+	return n
 }
-
-// anyFile reads a path as it is written.
-type anyFile struct{}
-
-func (anyFile) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
-func (anyFile) Open(name string) (*os.File, error)    { return os.Open(name) }
 
 // LoadPages reads the pages cfg names into memory. A file that is not
 // there, or that is empty, is no page, and neither is a folder that is not
 // there: the built-in answer stays. Anything else that cannot be a page is
 // an error: a file larger than maxPageSize, what is no regular file, a
-// file that cannot be read, and in the folder a link that leads out of it.
+// file that cannot be read, and a link that leads out of the folder the
+// file is in.
+//
+// Every page is read through the folder it is in, which is never left: the
+// folder of the config, or the folder of a path. So whoever may write there
+// cannot make a file from elsewhere, one of qisqa's own, a page.
 func LoadPages(cfg PagesConfig) (*Pages, error) {
-	var folder *os.Root
-	if cfg.Dir != "" {
-		root, err := os.OpenRoot(cfg.Dir)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			slog.Warn("pages.dir is not there, the built-in pages are used", "dir", cfg.Dir)
-		case err != nil:
-			return nil, fmt.Errorf("pages.dir: %w", err)
-		default:
-			folder = root
-			defer folder.Close()
-		}
-	}
-
 	pages := &Pages{}
 	for i, name := range pageNames {
-		var (
-			data []byte
-			err  error
-		)
-		path := cfg.Files[name]
-		switch {
-		case path != "":
-			data, err = readPage(anyFile{}, path)
-			if errors.Is(err, fs.ErrNotExist) {
-				slog.Warn("pages.files names a file that is not there, the built-in page is used", "page", name, "path", path)
-				continue
-			}
-		case folder != nil:
-			path = filepath.Join(cfg.Dir, name+".html")
-			data, err = readPage(folder, name+".html")
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-		default:
+		dir, file := cfg.Dir, name+".html"
+		if path := cfg.Files[name]; path != "" {
+			dir, file = filepath.Dir(path), filepath.Base(path)
+		}
+		if dir == "" {
+			continue
+		}
+		data, err := readPage(dir, file)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("page %s: %w", path, err)
+			return nil, fmt.Errorf("page %s: %w", filepath.Join(dir, file), err)
 		}
 		if len(data) > 0 {
 			pages.html[i] = data
@@ -129,25 +110,29 @@ func LoadPages(cfg PagesConfig) (*Pages, error) {
 	return pages, nil
 }
 
-// readPage reads one page. It looks before it opens: opening what is no
-// regular file can wait forever.
-func readPage(files pageFiles, name string) ([]byte, error) {
-	info, err := files.Stat(name)
+// readPage reads the file of that name in the folder dir. It opens without
+// waiting and looks at what it opened: a pipe would make a plain open wait
+// for ever, and a look before the open could see another file.
+func readPage(dir, file string) ([]byte, error) {
+	folder, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer folder.Close()
+	f, err := folder.OpenFile(file, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("is not a regular file")
 	}
-	if info.Size() > maxPageSize {
-		return nil, errors.New("is larger than 1 MB")
-	}
-	f, err := files.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	// The file may have grown since it was looked at.
+	// One byte more than a page may have tells a file that is too large,
+	// also one that grows while it is read.
 	data, err := io.ReadAll(io.LimitReader(f, maxPageSize+1))
 	if err != nil {
 		return nil, err
@@ -156,6 +141,24 @@ func readPage(files pageFiles, name string) ([]byte, error) {
 		return nil, errors.New("is larger than 1 MB")
 	}
 	return data, nil
+}
+
+// missingPages returns, for the log, what cfg names that is not there: the
+// folder, and each path of a page.
+func missingPages(cfg PagesConfig) (missing []string) {
+	notThere := func(path string) bool {
+		_, err := os.Stat(path)
+		return errors.Is(err, fs.ErrNotExist)
+	}
+	if cfg.Dir != "" && notThere(cfg.Dir) {
+		missing = append(missing, cfg.Dir)
+	}
+	for _, name := range pageNames {
+		if path := cfg.Files[name]; path != "" && notThere(path) {
+			missing = append(missing, path)
+		}
+	}
+	return missing
 }
 
 // pageStamps returns, in the order of pageNames, the stamp of the file each

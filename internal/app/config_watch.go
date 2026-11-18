@@ -19,6 +19,8 @@ type Watcher struct {
 	pages     atomic.Pointer[Pages]
 	last      fileStamp
 	lastPages [len(pageNames)]fileStamp
+	// pagesError is why the pages did not load the last time, or empty.
+	pagesError string
 }
 
 // fileStamp identifies one version of the config file. The zero value means
@@ -53,18 +55,41 @@ func (w *Watcher) Config() *Config {
 	return w.current.Load()
 }
 
-// LoadPages reads the pages the live config names and makes them live. On
-// an error the running pages stay. The stamps of the files are remembered
-// first, so that Run tries again only when one of them changes. It is
-// called at start, before Run, and then only by Run.
+// LoadPages reads the pages the live config names and makes them live, and
+// says in the log what it names that is not there. On an error the pages in
+// use stay, at start the built-in ones, and the error is logged: a page
+// only decorates an answer and never stops the service. It is called at
+// start, before Run, and then only by Run.
 func (w *Watcher) LoadPages() error {
+	return w.loadPages(false)
+}
+
+// loadPages is LoadPages. Run tries again at every poll while the pages do
+// not load, since a repair need not change a stamp; such a try is quiet: it
+// logs only an error that differs from the last one.
+func (w *Watcher) loadPages(again bool) error {
 	cfg := w.Config().Pages
 	w.lastPages = pageStamps(cfg)
+	if !again {
+		w.pagesError = ""
+		for _, path := range missingPages(cfg) {
+			slog.Warn("pages names what is not there, the built-in page is used", "path", path)
+		}
+	}
 	pages, err := LoadPages(cfg)
 	if err != nil {
+		if text := err.Error(); text != w.pagesError {
+			w.pagesError = text
+			slog.Error("own pages did not load, keeping what is shown now", "error", err)
+		}
 		return err
 	}
+	changed := again || pages.count() > 0 || w.Pages().count() > 0
+	w.pagesError = ""
 	w.pages.Store(pages)
+	if changed {
+		slog.Info("own pages loaded", "pages", pages.count())
+	}
 	return nil
 }
 
@@ -72,15 +97,6 @@ func (w *Watcher) LoadPages() error {
 // Callers must not modify them.
 func (w *Watcher) Pages() *Pages {
 	return w.pages.Load()
-}
-
-// reloadPages loads the pages again and logs how it went.
-func (w *Watcher) reloadPages() {
-	if err := w.LoadPages(); err != nil {
-		slog.Error("pages reload failed, keeping the running pages", "error", err)
-		return
-	}
-	slog.Info("pages reloaded")
 }
 
 // set replaces the live config.
@@ -107,7 +123,9 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration) {
 			w.last = stamp
 			w.reload()
 		} else if pageStamps(w.Config().Pages) != w.lastPages {
-			w.reloadPages()
+			w.loadPages(false)
+		} else if w.pagesError != "" {
+			w.loadPages(true)
 		}
 	}
 }
@@ -133,9 +151,8 @@ func (w *Watcher) reload() {
 	w.set(next)
 	slog.Info("config reloaded", "path", w.path)
 	// The new config may name other pages. When they do not load, the
-	// config still applies and the running pages stay, until a page file
-	// changes.
-	w.reloadPages()
+	// config still applies and the pages in use stay.
+	w.loadPages(false)
 }
 
 // needsRestart reports whether a startup-only setting differs.

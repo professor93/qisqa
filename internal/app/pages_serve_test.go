@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,7 +113,6 @@ func TestOwnPageForABlockedClient(t *testing.T) {
 	const refusal = `{"error":"too many requests"}`
 	showsPage(t, do(s, "GET", "short.example", "/"+code), http.StatusTooManyRequests, ownBlocked)
 	showsPage(t, do(s, "GET", "short.example", "/"), http.StatusTooManyRequests, ownBlocked)
-	showsPage(t, do(s, "HEAD", "short.example", "/"+code), http.StatusTooManyRequests, ownBlocked)
 	showsPage(t, do(s, "GET", "short.example", "/robots.txt"), http.StatusTooManyRequests, ownBlocked)
 
 	saysJSON(t, api(s, "POST", "/api/links", longURLBody), http.StatusTooManyRequests, refusal)
@@ -122,6 +122,44 @@ func TestOwnPageForABlockedClient(t *testing.T) {
 	saysJSON(t, do(s, "DELETE", "short.example", "/"+code), http.StatusTooManyRequests, refusal)
 
 	status(t, do(s, "GET", "short.example", "/healthz"), http.StatusOK)
+}
+
+// TestOwnPageForABlockedClientOverHTTP: over a real connection a HEAD gets
+// the status and the length of the operator's page and no body.
+func TestOwnPageForABlockedClientOverHTTP(t *testing.T) {
+	s, _ := serverWithPages(t, map[string]string{"429.html": ownBlocked})
+	server := httptest.NewServer(s.Handler())
+	defer server.Close()
+	ask := func(method, path string) (*http.Response, string) {
+		t.Helper()
+		r, err := http.NewRequest(method, server.URL+path, nil)
+		must(t, err)
+		r.Host = "short.example"
+		response, err := server.Client().Do(r)
+		must(t, err)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		must(t, err)
+		return response, string(body)
+	}
+	for i := 0; ; i++ {
+		if response, _ := ask("GET", fmt.Sprintf("/gone%d", i)); response.StatusCode == http.StatusTooManyRequests {
+			break
+		}
+		if i == 20 {
+			t.Fatal("twenty unknown codes did not get the client blocked")
+		}
+	}
+
+	response, body := ask("GET", "/")
+	eq(t, response.StatusCode, http.StatusTooManyRequests)
+	eq(t, body, ownBlocked+signatureComment)
+
+	response, body = ask("HEAD", "/")
+	eq(t, response.StatusCode, http.StatusTooManyRequests)
+	eq(t, response.Header.Get("Content-Type"), "text/html; charset=utf-8")
+	eq(t, response.ContentLength, int64(len(ownBlocked)+len(signatureComment)))
+	eq(t, body, "")
 }
 
 // TestOwnPageForAFailedLookup: when the store fails, a browser gets the

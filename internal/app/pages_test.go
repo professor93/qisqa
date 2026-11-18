@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // pagesFolder makes a folder that holds the given files.
@@ -127,6 +129,58 @@ func TestLoadPagesRefusesALinkOutOfTheFolder(t *testing.T) {
 	pagesAre(t, pages, map[string]string{"404": "inside"})
 }
 
+// TestLoadPagesRefusesALinkOutOfAPathsFolder: a page that has a path of its
+// own is read from the folder it is in, and that folder is not left either:
+// whoever may write there cannot make another file a page.
+func TestLoadPagesRefusesALinkOutOfAPathsFolder(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, outside, "secret.txt", "secret")
+	for _, target := range []string{filepath.Join(outside, "secret.txt"), "../" + filepath.Base(outside) + "/secret.txt"} {
+		dir := t.TempDir()
+		link := filepath.Join(dir, "missing.html")
+		must(t, os.Symlink(target, link))
+		pagesRefused(t, PagesConfig{Files: map[string]string{"404": link}}, "missing.html")
+	}
+
+	dir := pagesFolder(t, map[string]string{"real.html": "inside"})
+	link := filepath.Join(dir, "missing.html")
+	must(t, os.Symlink("real.html", link))
+	pages, err := LoadPages(PagesConfig{Files: map[string]string{"404": link}})
+	must(t, err)
+	pagesAre(t, pages, map[string]string{"404": "inside"})
+
+	// A folder on the way to the file may be a link: the operator wrote
+	// that path.
+	through := filepath.Join(t.TempDir(), "pages")
+	must(t, os.Symlink(dir, through))
+	pages, err = LoadPages(PagesConfig{Files: map[string]string{"404": filepath.Join(through, "real.html")}})
+	must(t, err)
+	pagesAre(t, pages, map[string]string{"404": "inside"})
+}
+
+// TestLoadPagesNeverWaitsForAPipe: opening a pipe that nobody writes to
+// waits for ever; a page that is one is refused at once.
+func TestLoadPagesNeverWaitsForAPipe(t *testing.T) {
+	dir := t.TempDir()
+	pipe := filepath.Join(dir, "404.html")
+	must(t, syscall.Mkfifo(pipe, 0o644))
+	for _, cfg := range []PagesConfig{{Dir: dir}, {Files: map[string]string{"index": pipe}}} {
+		done := make(chan error, 1)
+		go func() {
+			_, err := LoadPages(cfg)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "regular file") {
+				t.Errorf("LoadPages(%+v) gave %v, want an error that says it is no regular file", cfg, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("LoadPages(%+v) still waits for the pipe after two seconds", cfg)
+		}
+	}
+}
+
 func TestLoadPagesRefusesALargeFile(t *testing.T) {
 	largest := strings.Repeat("a", maxPageSize)
 	dir := pagesFolder(t, map[string]string{"404.html": largest})
@@ -147,7 +201,7 @@ func TestLoadPagesRefusesWhatIsNoFile(t *testing.T) {
 
 	// A folder that is a file is no folder.
 	file := writeFile(t, t.TempDir(), "pages", "not a folder")
-	pagesRefused(t, PagesConfig{Dir: file}, "pages.dir")
+	pagesRefused(t, PagesConfig{Dir: file}, file)
 }
 
 func TestLoadPagesRefusesAFileItMayNotRead(t *testing.T) {

@@ -299,9 +299,9 @@ func serve(ctx context.Context, configPath string, toStderr slog.Handler) (serve
 	}
 
 	watcher := NewWatcher(configPath, cfg)
-	if err := watcher.LoadPages(); err != nil {
-		return err
-	}
+	// Pages that do not load are logged and tried again while the program
+	// runs: they never keep the links from working.
+	watcher.LoadPages()
 	server := NewServer(watcher, meta, store, logs)
 
 	// The admin commands reach this server, and its Meta, through the socket.

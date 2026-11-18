@@ -10,8 +10,8 @@ are in the data folder, see [Accounts and domains](accounts-and-domains.md).
 qisqa checks the file every 5 seconds. Keys marked **yes** below apply
 without a restart. If the file is broken, the error is logged and the running
 configuration stays. Durations are written as `30s`, `15m`, `12h` or `10d`,
-at most `36500d`. A relative path, as in `data_dir`, `log.dir` and
-`pages.dir`, is taken from the folder qisqa was started in.
+at most `36500d`. A relative path, as in `data_dir`, `log.dir`, `pages.dir`
+and `pages.files`, is taken from the folder qisqa was started in.
 
 | Key | Default | Meaning | Live reload |
 |---|---|---|---|
@@ -57,11 +57,11 @@ pages:
     404: /srv/pages/missing.html
 ```
 
-- Each page is one HTML file of at most 1 MB that brings everything with
-  it. qisqa serves no other file, so styles, scripts and images are written
-  into the page or loaded from another host.
-- `429` and `500` are shown to a GET outside `/api/`. The API and every
-  other request are answered as before, in JSON.
+- Each page is one HTML file of at most 1 MB, written in UTF-8, that brings
+  everything with it. qisqa serves no other file, so styles, scripts and
+  images are written into the page or loaded from another host.
+- `429` and `500` are shown to a GET or HEAD outside `/api/`. The API and
+  every other request are answered as before.
 - A fallback URL still redirects wherever it is set: your page is shown
   only where the built-in one was. The pages that open secured and password
   links are not replaced.
@@ -69,15 +69,22 @@ pages:
   file and a `pages.dir` that is not there. For a path of `pages.files` and
   for `pages.dir` the log says so.
 - Some files cannot be a page: one over 1 MB, what is no regular file, a
-  file qisqa may not read, and in `pages.dir` a link that leads out of the
-  folder. With one of them qisqa does not start, and says which. If it
-  turns up while qisqa runs, the pages it has stay and the error is logged.
+  file qisqa may not read, and a link that is absolute or leads out of the
+  folder it is in. The log then says which, and the pages in use stay: at
+  start the built-in ones. qisqa tries again every 5 seconds until the file
+  is repaired. A page never keeps the links from working.
 - The files are checked with the config, every 5 seconds: a page that
   changed, appeared or went away is taken without a restart.
 - From `pages.dir` only those four names are ever opened, and no name comes
-  from a request. A path of `pages.files` is opened as it is written.
+  from a request. Every page, also one with a path of its own, is read from
+  the folder it is in, and that folder is not left.
 
 The pages are shown to everyone, as they are: whoever may write these files
 decides what your visitors see. Keep them, like the config, writable by the
-administrator only. `429.html` is sent to a blocked client for every request
-it makes, so keep that one small.
+administrator only. A page is sent whole at every request, and `429.html`
+to a blocked client for every request it makes, so keep them small.
+
+The service that the installer sets up does not see `/home`, `/root` and
+`/tmp`: put the pages into the install folder, for example
+`/opt/qisqa/pages`. In Docker, mount the folder of the pages into the
+container and name that path.
