@@ -390,29 +390,132 @@ func TestInstallerChecksTheFolder(t *testing.T) {
 	}
 }
 
+// fakeQisqa writes an executable that answers -version as a qisqa of the
+// given version does, and returns its path.
+func fakeQisqa(t *testing.T, path, version string) string {
+	t.Helper()
+	must(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	must(t, os.WriteFile(path, []byte("#!/bin/sh\necho 'qisqa "+version+"'\n"), 0o755))
+	return path
+}
+
+// TestInstallerReadsTheReleaseFromTheArchiveName: the version of a release
+// is the part of its archive's name between "qisqa_" and the system.
+func TestInstallerReadsTheReleaseFromTheArchiveName(t *testing.T) {
+	for archive, want := range map[string]string{
+		"qisqa_0.1.2_linux_amd64.tar.gz":             "0.1.2",
+		"qisqa_1.0.0-rc.1+build5_linux_amd64.tar.gz": "1.0.0-rc.1+build5",
+	} {
+		got := strings.TrimSpace(installerPrints(t, "os=linux arch=amd64; release_of "+archive))
+		if got != want {
+			t.Errorf("release_of %s = %q, want %q", archive, got, want)
+		}
+	}
+}
+
+// TestInstallerComparesTheVersions: install.sh tells a first install, the
+// same version, and another version apart by what the qisqa in the folder
+// says of itself.
+func TestInstallerComparesTheVersions(t *testing.T) {
+	dir := t.TempDir()
+	call := func(release string) string {
+		return strings.TrimSpace(installerPrints(t,
+			"sudo= kind=user dir='"+dir+"' release="+release+"; find_installed; choose_change >/dev/null; echo \"$change [$current]\""))
+	}
+	if got := call("0.1.2"); got != "install []" {
+		t.Errorf("an empty folder: %q, want %q", got, "install []")
+	}
+	fakeQisqa(t, filepath.Join(dir, "qisqa"), "0.1.1")
+	if got := call("0.1.1"); got != "none [0.1.1]" {
+		t.Errorf("the same version: %q, want %q", got, "none [0.1.1]")
+	}
+	if got := call("0.1.2"); got != "replace [0.1.1]" {
+		t.Errorf("another version: %q, want %q", got, "replace [0.1.1]")
+	}
+	// A binary that does not run tells no version: it is replaced as on a
+	// first install.
+	must(t, os.WriteFile(filepath.Join(dir, "qisqa"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	if got := call("0.1.2"); got != "install []" {
+		t.Errorf("a qisqa that does not run: %q, want %q", got, "install []")
+	}
+}
+
+// TestInstallerKeepsTheReplacedBinary: an upgrade keeps the binary it
+// replaces as qisqa.old, the same version replaces nothing, and when the
+// new binary does not start the old one is put back.
+func TestInstallerKeepsTheReplacedBinary(t *testing.T) {
+	version := func(path string) string {
+		out, err := exec.Command(path, "-version").Output()
+		must(t, err)
+		return strings.TrimSpace(string(out))
+	}
+	dir, tmp := t.TempDir(), t.TempDir()
+	old := fakeQisqa(t, filepath.Join(dir, "qisqa"), "0.1.1")
+	fakeQisqa(t, filepath.Join(tmp, "release", "qisqa"), "0.1.2")
+	vars := "sudo= kind=user service= dir='" + dir + "' tmp='" + tmp + "' archive=a.tar.gz current=0.1.1 release=0.1.2 "
+
+	installerPrints(t, vars+"change=none; binary")
+	if _, err := os.Stat(old + ".old"); err == nil || version(old) != "qisqa 0.1.1" {
+		t.Fatalf("the same version: the binary is %q and qisqa.old is there: %v", version(old), err == nil)
+	}
+
+	said := installerPrints(t, vars+"change=replace; binary")
+	if version(old) != "qisqa 0.1.2" || version(old+".old") != "qisqa 0.1.1" {
+		t.Fatalf("an upgrade: the binary is %q and qisqa.old is %q", version(old), version(old+".old"))
+	}
+	if !strings.Contains(said, "qisqa.old") {
+		t.Errorf("an upgrade does not say where the replaced binary is: %q", said)
+	}
+
+	said = installerPrints(t, vars+"change=replace; if (fail_start 'the new one does not answer') 2>&1; then echo went on; else echo stopped; fi")
+	if version(old) != "qisqa 0.1.1" {
+		t.Errorf("after a start that failed the binary is %q, want the old one back", version(old))
+	}
+	if _, err := os.Stat(old + ".old"); err == nil {
+		t.Error("after a start that failed qisqa.old is still there")
+	}
+	for _, want := range []string{"the new one does not answer", "qisqa 0.1.1 was put back", "stopped"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("after a start that failed the script says %q, without %q", said, want)
+		}
+	}
+
+	// On a first install there is nothing to put back.
+	said = installerPrints(t, vars+"change=install; if (fail_start 'it does not answer') 2>&1; then echo went on; else echo stopped; fi")
+	if strings.Contains(said, "put back") || !strings.Contains(said, "stopped") {
+		t.Errorf("a first install that failed says %q", said)
+	}
+}
+
 // TestInstallerChecksTheAddressUnderOpenRC: OpenRC does not say which
 // process answers on qisqa's address, so install.sh stops the service, fails
 // if something still answers there, and only then starts the service.
 func TestInstallerChecksTheAddressUnderOpenRC(t *testing.T) {
 	script := readDoc(t, "install.sh")
+	from := strings.Index(script, "\ninstall_system() {\n")
+	if from < 0 {
+		t.Fatal("install.sh has no function install_system")
+	}
+	script = script[from:]
+	script = script[:strings.Index(script, "\n}\n")]
 	last := -1
 	for _, step := range []string{
 		"rc-service qisqa stop ",
-		"\t\thealth_url\n\t\tif answers; then\n\t\t\tdie \"something else already answers on $url",
+		"\t\t\thealth_url\n\t\t\tif answers; then\n\t\t\t\tfail_start \"something else already answers on $url",
 		"rc-service qisqa start ",
 	} {
 		if n := strings.Count(script, step); n != 1 {
-			t.Errorf("install.sh has %q %d times, want once", step, n)
+			t.Errorf("install_system has %q %d times, want once", step, n)
 			continue
 		}
 		at := strings.Index(script, step)
 		if at < last {
-			t.Errorf("install.sh has %q before the step that must come before it", step)
+			t.Errorf("install_system has %q before the step that must come before it", step)
 		}
 		last = at
 	}
 	if strings.Contains(script, "rc-service qisqa restart") {
-		t.Error("install.sh restarts the OpenRC service, which skips the check of the address")
+		t.Error("install_system restarts the OpenRC service, which skips the check of the address")
 	}
 }
 

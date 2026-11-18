@@ -48,9 +48,10 @@ sh install.sh
 ```
 
 [The installer](docs/running.md#the-installer) has its options and how to
-remove what it installed. After the installer, start qisqa if its last
-lines say so, and go on at the domain and the account below: the steps
-before them are for qisqa without the installer.
+remove what it installed; the same command, run again later,
+[upgrades](docs/running.md#upgrading) qisqa. After the installer, start
+qisqa if its last lines say so, and go on at the domain and the account
+below: the steps before them are for qisqa without the installer.
 
 Without the installer, download qisqa for your system from the
 [releases page](https://github.com/professor93/qisqa/releases) (see

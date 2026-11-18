@@ -42,15 +42,14 @@ anything when the two differ. Then:
   current user into `~/qisqa`, mode 700: the binary, the documents and the
   same `config.yaml`, and no service. A missing tool is then an error.
 
-Its last lines give the version, where the config is, and the commands
-that add a domain and an account, in the form for that install. It writes
-`config.yaml` only where there is none: a second run installs the binary
-and the documents again, keeps `config.yaml` and the data folder as they
-are, and restarts the service. A folder that is there may hold a
-`config.yaml`, `data` and `logs` made before the first run, which are
-kept; the script does not install into one that holds other files but no
-`qisqa`, and a system install uses a folder that is there only when root
-owns it and nobody else may write to it.
+Its last lines give the version, where the config is, and, after a first
+install, the commands that add a domain and an account, in the form for
+that install. It writes `config.yaml` only where there is none, and a
+second run is an upgrade: see [Upgrading](#upgrading). A folder that is
+there may hold a `config.yaml`, `data` and `logs` made before the first
+run, which are kept; the script does not install into one that holds other
+files but no `qisqa`, and a system install uses a folder that is there only
+when root owns it and nobody else may write to it.
 
 | Option | Meaning |
 |---|---|
@@ -69,6 +68,42 @@ Through the pipe, the options come after `sh -s --`:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/professor93/qisqa/main/install.sh | sh -s -- --user
 ```
+
+### Upgrading
+
+Run the installer again, with the options of the first run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/professor93/qisqa/main/install.sh | sh
+```
+
+It compares the release with the version that the `qisqa` in the folder
+says it is:
+
+- **Another version** takes the place of the binary and the documents, and
+  the binary it replaced stays beside it as `qisqa.old`. `config.yaml`, the
+  data folder and the log folder are not touched. The service is started
+  again, and the script waits for `/healthz` as on a first install. If
+  qisqa does not come up, the script puts `qisqa.old` back, starts the
+  service again and ends with an error: what ran before runs again.
+- **The same version** changes nothing, and a service that runs is not
+  started again. One that does not run is started.
+
+`--version 0.1.0` installs that release, also when it is older than the one
+that is there. In a user install, and where there is no service, a qisqa
+that is running goes on running the old binary: stop it and start it again.
+
+To go back by hand after an upgrade, with systemd:
+
+```sh
+sudo mv /opt/qisqa/qisqa.old /opt/qisqa/qisqa
+sudo systemctl restart qisqa
+```
+
+An older qisqa may not read what a newer one wrote into the data folder:
+back the data folder up before an upgrade that you may want to undo.
+
+### Removing
 
 To remove what it installed, stop the service and remove it, with systemd:
 

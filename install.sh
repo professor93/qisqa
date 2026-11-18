@@ -46,7 +46,9 @@ Installs qisqa from its releases on GitHub.
 On Linux, as root or with sudo, qisqa is installed into /opt/qisqa for the
 system user qisqa, with a systemd or OpenRC service. Otherwise, and always
 on macOS, it is installed for the current user, and you start it yourself.
-Through a pipe, give the options after "sh -s --".
+Run again, it upgrades: a newer release replaces the binary, the config and
+the data stay, and the service is started again; the same release changes
+nothing. Through a pipe, give the options after "sh -s --".
 USAGE
 }
 
@@ -331,9 +333,10 @@ sha256() {
 	fi | cut -d ' ' -f 1
 }
 
-# download fetches the release's checksums.txt, then the archive for this
-# system, checks its SHA-256 and unpacks it into $tmp/release.
-download() {
+# find_release fetches the release's checksums.txt and finds in it the
+# archive for this system: its name, its SHA-256 and, from the name, the
+# version of the release.
+find_release() {
 	case $releases in
 	https://*) ;;
 	*) die "QISQA_RELEASES_URL must be an https:// address" ;;
@@ -345,18 +348,60 @@ download() {
 	fi
 	say "Download: $base/checksums.txt."
 	if [ "$version" = latest ]; then
-		release="the latest release"
+		asked="the latest release"
 	else
-		release="a release $version"
+		asked="a release $version"
 	fi
 	fetch "$base/checksums.txt" "$tmp/checksums.txt" ||
-		die "could not download $base/checksums.txt; is there $release? See $releases"
+		die "could not download $base/checksums.txt; is there $asked? See $releases"
 	line=$(grep -E "^[0-9a-f]{64}  qisqa_[0-9A-Za-z.+-]+_${os}_${arch}\.tar\.gz\$" "$tmp/checksums.txt" || true)
 	[ -n "$line" ] || die "the release has no archive for $os $arch; see $releases"
 	[ "$(printf '%s\n' "$line" | wc -l)" -eq 1 ] || die "checksums.txt names more than one archive for $os $arch"
 	want=${line%% *}
 	archive=${line##* }
+	release=$(release_of "$archive")
+}
 
+# release_of prints the version in the name of an archive for this system,
+# qisqa_VERSION_OS_ARCH.tar.gz.
+release_of() {
+	name=${1#qisqa_}
+	printf '%s\n' "${name%"_${os}_${arch}.tar.gz"}"
+}
+
+# find_installed sets current to the version that the qisqa in the folder
+# says it is, or to nothing: when there is none, when it does not run, and
+# in a system install when someone other than root could have changed it,
+# since root would run it.
+find_installed() {
+	current=
+	as_root test -f "$dir/qisqa" || return 0
+	if [ "$kind" = system ]; then
+		[ "$(as_root stat -L -c %u "$dir/qisqa")" = 0 ] || return 0
+		case $(as_root stat -L -c %a "$dir/qisqa") in
+		*[2367]? | *[2367]) return 0 ;;
+		esac
+	fi
+	current=$(as_root "$dir/qisqa" -version </dev/null 2>/dev/null | sed -n 's/^qisqa //p') || current=
+}
+
+# choose_change sets change: install on a first install, none when the
+# release is the version that is there, replace for any other version.
+choose_change() {
+	if [ -z "$current" ]; then
+		change=install
+	elif [ "$current" = "$release" ]; then
+		change=none
+		say "Version: qisqa $current is in $dir, and it is the release asked for: the binary and the documents stay."
+	else
+		change=replace
+		say "Version: qisqa $current is in $dir; qisqa $release takes its place."
+	fi
+}
+
+# download fetches the archive that find_release found, checks its SHA-256
+# and unpacks it into $tmp/release.
+download() {
 	say "Download: $base/$archive."
 	fetch "$base/$archive" "$tmp/$archive" || die "could not download $base/$archive"
 	got=$(sha256 "$tmp/$archive")
@@ -374,13 +419,41 @@ download() {
 # binary puts the new binary into the folder under another name, runs it
 # there (the temporary folder may not allow it), and only then renames it
 # over the old one: a running binary cannot be written to, and one that does
-# not run replaces nothing.
+# not run replaces nothing. A binary of another version that it replaces is
+# kept beside it as qisqa.old, to go back to.
 binary() {
+	if [ "$change" = none ]; then
+		installed="qisqa $current"
+		say "Binary: keeping $dir/qisqa, $installed."
+		return 0
+	fi
 	put -m 755 "$tmp/release/qisqa" "$dir/.qisqa.new"
 	installed=$(as_root "$dir/.qisqa.new" -version </dev/null) ||
 		die "the qisqa of $archive does not run on this system; nothing was replaced"
-	as_root mv -f "$dir/.qisqa.new" "$dir/qisqa"
-	say "Binary: $dir/qisqa, $installed."
+	if [ "$change" = replace ]; then
+		as_root cp -pf "$dir/qisqa" "$dir/qisqa.old"
+		as_root mv -f "$dir/.qisqa.new" "$dir/qisqa"
+		say "Binary: $dir/qisqa, $installed; the one it replaced is $dir/qisqa.old."
+	else
+		as_root mv -f "$dir/.qisqa.new" "$dir/qisqa"
+		say "Binary: $dir/qisqa, $installed."
+	fi
+}
+
+# fail_start ends the script when qisqa did not come up, with the message
+# given. After an upgrade it first puts the binary that was replaced back
+# and starts the service again: a release that does not start here costs a
+# few seconds, not the service.
+fail_start() {
+	if [ "$change" = replace ] && as_root test -f "$dir/qisqa.old"; then
+		as_root mv -f "$dir/qisqa.old" "$dir/qisqa"
+		case $service in
+		systemd) as_root systemctl restart qisqa </dev/null || true ;;
+		openrc) as_root rc-service qisqa restart </dev/null >/dev/null 2>&1 || true ;;
+		esac
+		die "$1; qisqa $current was put back${service:+ and started again}"
+	fi
+	die "$1"
 }
 
 # put installs a file or, with -d, a folder into the install folder: as
@@ -396,6 +469,7 @@ put() {
 # documents copies README.md, LICENSE, config.example.yaml and docs/ from the
 # archive into the folder, those that the archive has; a link is no document.
 documents() {
+	[ "$change" != none ] || return 0
 	for name in README.md LICENSE config.example.yaml; do
 		if [ -f "$tmp/release/$name" ] && [ ! -L "$tmp/release/$name" ]; then
 			put -m 644 "$tmp/release/$name" "$dir/$name"
@@ -412,9 +486,11 @@ documents() {
 	say "Documents: those of the archive are in $dir."
 }
 
-install_system() {
-	# Before anything is made: qisqa's own user, or anyone but root, must not
-	# be able to put anything into a folder that root then writes through.
+# check_owner refuses, in a system install, a folder that is there and that
+# someone other than root may write to. Before anything is made or run:
+# qisqa's own user, or anyone but root, must not be able to put anything
+# into a folder that root then writes through and runs a binary from.
+check_owner() {
 	if [ -d "$dir" ]; then
 		[ "$(stat -L -c %u "$dir")" = 0 ] || die "$dir is there but not owned by root; the script does not install into it"
 		mode=$(stat -L -c %a "$dir")
@@ -422,6 +498,9 @@ install_system() {
 		*[2367]? | *[2367]) die "$dir is there and writable by more than root (mode $mode); the script does not install into it" ;;
 		esac
 	fi
+}
+
+install_system() {
 	if id qisqa >/dev/null 2>&1; then
 		say "User: qisqa is there."
 	else
@@ -450,11 +529,12 @@ install_system() {
 	fi
 
 	binary
-	documents
 
+	wrote_config=
 	if as_root test -e "$dir/config.yaml" || as_root test -L "$dir/config.yaml"; then
 		say "Config: keeping $dir/config.yaml."
 	else
+		wrote_config=yes
 		config_file >"$tmp/config.yaml"
 		# set -C: should the test above have been wrong (a sudo that failed),
 		# the shell does not write over the config that is there. Its $1 is
@@ -479,36 +559,60 @@ install_system() {
 		say "Logs: made the log folder $dir/logs, for the user qisqa alone."
 	fi
 
-	service=
+	# The service is started again only when something of it changed: the
+	# binary, the config, its own file, or when it does not run.
+	service='' restart=''
+	if [ "$change" != none ] || [ -n "$wrote_config" ]; then
+		restart=yes
+	fi
 	if [ -d /run/systemd/system ]; then
-		systemd_unit >"$tmp/qisqa.service"
-		as_root install -o 0 -g 0 -m 644 "$tmp/qisqa.service" /etc/systemd/system/qisqa.service
-		as_root systemctl daemon-reload </dev/null || die "systemctl daemon-reload failed"
-		as_root systemctl enable --quiet qisqa </dev/null || die "systemctl enable qisqa failed"
-		as_root systemctl restart qisqa </dev/null || die "qisqa did not start; its output: journalctl -u qisqa"
-		say "Service: wrote /etc/systemd/system/qisqa.service, enabled and (re)started it."
 		service=systemd output="journalctl -u qisqa"
-	elif have rc-service; then
-		openrc_script >"$tmp/qisqa.init"
-		as_root install -o 0 -g 0 -m 755 "$tmp/qisqa.init" /etc/init.d/qisqa
-		as_root rc-update add qisqa default </dev/null >/dev/null || die "rc-update add qisqa default failed"
-		# OpenRC does not say which process answers: with the service
-		# stopped, nothing may answer on qisqa's address, or a qisqa started
-		# by hand would pass for the service.
-		as_root rc-service qisqa stop </dev/null >/dev/null 2>&1 || true
-		health_url
-		if answers; then
-			die "something else already answers on $url; stop it first (a qisqa started by hand?), then run the script again"
+		systemd_unit >"$tmp/qisqa.service"
+		if [ "$(as_root cat /etc/systemd/system/qisqa.service 2>/dev/null)" != "$(cat "$tmp/qisqa.service")" ]; then
+			as_root install -o 0 -g 0 -m 644 "$tmp/qisqa.service" /etc/systemd/system/qisqa.service
+			as_root systemctl daemon-reload </dev/null || die "systemctl daemon-reload failed"
+			restart=yes
 		fi
-		as_root rc-service qisqa start </dev/null >/dev/null || die "qisqa did not start; its output: /var/log/qisqa.log"
-		say "Service: wrote /etc/init.d/qisqa, added it to the default runlevel and (re)started it."
+		as_root systemctl enable --quiet qisqa </dev/null || die "systemctl enable qisqa failed"
+		as_root systemctl is-active --quiet qisqa </dev/null || restart=yes
+		if [ -n "$restart" ]; then
+			as_root systemctl restart qisqa </dev/null || fail_start "qisqa did not start; its output: $output"
+			say "Service: /etc/systemd/system/qisqa.service, enabled and (re)started."
+		fi
+	elif have rc-service; then
 		service=openrc output=/var/log/qisqa.log
+		openrc_script >"$tmp/qisqa.init"
+		if [ "$(as_root cat /etc/init.d/qisqa 2>/dev/null)" != "$(cat "$tmp/qisqa.init")" ]; then
+			as_root install -o 0 -g 0 -m 755 "$tmp/qisqa.init" /etc/init.d/qisqa
+			restart=yes
+		fi
+		as_root rc-update add qisqa default </dev/null >/dev/null || die "rc-update add qisqa default failed"
+		as_root rc-service qisqa status </dev/null >/dev/null 2>&1 || restart=yes
+		if [ -n "$restart" ]; then
+			# OpenRC does not say which process answers: with the service
+			# stopped, nothing may answer on qisqa's address, or a qisqa
+			# started by hand would pass for the service.
+			as_root rc-service qisqa stop </dev/null >/dev/null 2>&1 || true
+			health_url
+			if answers; then
+				fail_start "something else already answers on $url; stop it first (a qisqa started by hand?), then run the script again"
+			fi
+			as_root rc-service qisqa start </dev/null >/dev/null || fail_start "qisqa did not start; its output: $output"
+			say "Service: /etc/init.d/qisqa, in the default runlevel and (re)started."
+		fi
 	else
 		say "Service: neither systemd nor OpenRC runs here, so there is no service; start qisqa by hand."
 	fi
 	if [ -n "$service" ]; then
-		wait_for_health
+		if [ -n "$restart" ]; then
+			wait_for_health
+		else
+			say "Service: qisqa runs and nothing of it changed; it was not started again."
+		fi
 	fi
+	# Last, so that a release that did not start leaves the old documents
+	# beside the old binary.
+	documents
 }
 
 # health_url sets url to /healthz on the address that the config gives.
@@ -550,7 +654,7 @@ wait_for_health() {
 			pid=''
 		fi
 		tries=$((tries + 1))
-		[ "$tries" -lt 10 ] || die "qisqa does not answer on $url after 10 seconds; its output: $output"
+		[ "$tries" -lt 10 ] || fail_start "qisqa does not answer on $url after 10 seconds; its output: $output"
 		sleep 1
 	done
 	say "Health: $url answers."
@@ -600,8 +704,21 @@ finish() {
 		if [ -f "$dir/docs/nginx.md" ]; then nginx=$dir/docs/nginx.md; else nginx=$pages/nginx.md; fi
 	fi
 	say ""
-	say "Installed $installed in $dir."
+	case $change in
+	none) say "qisqa $current was in $dir already; nothing was replaced." ;;
+	replace) say "Installed $installed in $dir; it replaced qisqa $current, kept as $dir/qisqa.old." ;;
+	*) say "Installed $installed in $dir." ;;
+	esac
 	say "The config is $dir/config.yaml."
+	if [ "$change" != install ]; then
+		# Not a first install: the domain and the account are there already.
+		if [ "$kind" = user ] || [ -z "$service" ]; then
+			[ "$change" = none ] || say "A qisqa that is running still runs the old binary: stop it and start it again."
+		else
+			say "qisqa runs as the $service service qisqa; its output: $output."
+		fi
+		return 0
+	fi
 	if [ "$kind" = user ]; then
 		# From the folder, as in the Quick start: the admin socket's path,
 		# data/qisqa.sock, stays short whatever the folder.
@@ -639,12 +756,20 @@ main() {
 	find_system
 	find_rights
 	check_folder
+	if [ "$kind" = system ]; then
+		check_owner
+	fi
 	find_tools
 	tmp=
 	trap cleanup EXIT
 	trap 'exit 1' HUP INT TERM
 	tmp=$(mktemp -d) || die "could not make a temporary folder"
-	download
+	find_release
+	find_installed
+	choose_change
+	if [ "$change" != none ]; then
+		download
+	fi
 	if [ "$kind" = system ]; then
 		install_system
 	else
