@@ -58,6 +58,16 @@ bare_url_zones: top100
 # on a domain without a fallback URL of its own. Empty: show a 404 page.
 fallback_url: ""
 
+# Your own HTML pages in place of the built-in answers: index, 404, 429 (for
+# a blocked client) and 500. dir is a folder that holds index.html, 404.html,
+# 429.html and 500.html; files gives one page a path of its own, which wins
+# over dir. A page that is not there stays built in. Each page is one file
+# that brings everything with it: no other file is served.
+pages:
+  dir: ""
+  # files:
+  #   404: /srv/pages/missing.html
+
 # In-memory cache of links that were created or opened. [restart]
 cache:
   ttl: 6h             # how long a link stays cached
