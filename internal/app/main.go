@@ -299,6 +299,9 @@ func serve(ctx context.Context, configPath string, toStderr slog.Handler) (serve
 	}
 
 	watcher := NewWatcher(configPath, cfg)
+	if err := watcher.LoadPages(); err != nil {
+		return err
+	}
 	server := NewServer(watcher, meta, store, logs)
 
 	// The admin commands reach this server, and its Meta, through the socket.
