@@ -108,6 +108,9 @@ func TestConfigRejects(t *testing.T) {
 		{"zero log.plain_days", minimalYAML + "log:\n  plain_days: 0\n", "log.plain_days"},
 		{"negative log.archive_days", minimalYAML + "log:\n  archive_days: -1\n", "log.archive_days"},
 		{"log.keep_days", minimalYAML + "log:\n  keep_days: 14\n", "keep_days"}, // replaced by plain_days and archive_days
+		{"pages.files names no page", minimalYAML + "pages:\n  files:\n    403: ./x.html\n", "pages.files"},
+		{"pages.files without a path", minimalYAML + "pages:\n  files:\n    404: \"\"\n", "pages.files.404"},
+		{"pages with an unknown key", minimalYAML + "pages:\n  folder: ./pages\n", "folder"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -132,6 +135,23 @@ func TestBareURLZonesConfig(t *testing.T) {
 			eq(t, cfg.BareURLZones, want)
 		})
 	}
+}
+
+// TestPagesConfig: pages names a folder and a path per page; a page's name
+// may be written as a number or as a string.
+func TestPagesConfig(t *testing.T) {
+	cfg, err := loadYAML(t, minimalYAML)
+	must(t, err)
+	eq(t, cfg.Pages.Dir, "")
+	eq(t, len(cfg.Pages.Files), 0)
+
+	cfg, err = loadYAML(t, minimalYAML+"pages:\n  dir: ./pages\n  files:\n    404: ./a.html\n    \"500\": ./b.html\n    index: ./c.html\n")
+	must(t, err)
+	eq(t, cfg.Pages.Dir, "./pages")
+	eq(t, len(cfg.Pages.Files), 3)
+	eq(t, cfg.Pages.Files["404"], "./a.html")
+	eq(t, cfg.Pages.Files["500"], "./b.html")
+	eq(t, cfg.Pages.Files["index"], "./c.html")
 }
 
 // TestSyncEveryConfig: sync_every is 0 unless set, and otherwise an

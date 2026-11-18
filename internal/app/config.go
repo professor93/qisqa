@@ -29,6 +29,7 @@ type Config struct {
 	ShortURLFormat string      `yaml:"short_url_format"`
 	BareURLZones   string      `yaml:"bare_url_zones"`
 	FallbackURL    string      `yaml:"fallback_url"`
+	Pages          PagesConfig `yaml:"pages"`
 	Cache          CacheConfig `yaml:"cache"`
 	NotFoundLimit  LimitConfig `yaml:"not_found_limit"`
 	Log            LogConfig   `yaml:"log"`
@@ -138,6 +139,9 @@ func (c *Config) finish() error {
 			c.BareURLZones, strings.Join(bareURLZoneTiers, ", "))
 	}
 	if err := checkOptionalURL("fallback_url", c.FallbackURL); err != nil {
+		return err
+	}
+	if err := c.Pages.check(); err != nil {
 		return err
 	}
 
