@@ -129,6 +129,9 @@ func TestFindBareURLs(t *testing.T) {
 		{"сайт.рф/x и САЙТ.РФ/y", []string{"сайт.рф/x", "САЙТ.РФ/y"}},
 		{"he came.Biz is a zone", []string{"came.Biz"}},
 		{"example.com/a example.com/a", []string{"example.com/a"}},
+		{"go to 163.com/news/today", []string{"163.com/news/today"}},
+		{"münchen.example/straße", []string{"münchen.example/straße"}},
+		{"example.com:65535/x", []string{"example.com:65535/x"}},
 		{"example.com/a,https://example.org/b", []string{"example.com/a", "https://example.org/b"}},
 		{"https://example.com/a and example.org/b", []string{"https://example.com/a", "example.org/b"}},
 
@@ -148,6 +151,17 @@ func TestFindBareURLs(t *testing.T) {
 		{"example.com:123456/x", nil},
 		{"Site:example.com/x", nil},
 		{"a_b.com/x", nil},
+		{"example.com:99999/long/path", nil},
+		{"example.com:0/x", nil},
+		// A list marker glued to a URL is no part of a host: no label starts
+		// or ends with a hyphen, and a number with a dot is no first label.
+		{"Sites:\n-example.com/offers/2026\n-example.org/news", nil},
+		{"example-.com/x and --.com", nil},
+		{"1.example.com/offers/2026 2.example.org/news/2026", nil},
+		{"on 12.05.2026.Biz we wait", nil},
+		// Text of another script that runs into a URL makes no host.
+		{"请访问example.com/page查看", nil},
+		{"наш сайт-example.com/page/long/enough", nil},
 		// What is inside a URL with a scheme, or runs into one, is no URL
 		// of its own.
 		{"https://example.com/r?to=example.org/x", []string{"https://example.com/r?to=example.org/x"}},
@@ -183,4 +197,17 @@ func TestBareURLsInALongTextOfDottedWords(t *testing.T) {
 		t.Fatalf("found %d URLs, the first %q", len(got), got[0])
 	}
 	eq(t, ReplaceURLs(text, map[string]string{"a.b": "x"}, testZones), text)
+}
+
+// TestBareURLRefusesAnEndlessLabelCheaply: a label longer than a host name
+// allows is refused before it is turned into its ASCII form, which costs
+// time that grows with the square of its length.
+func TestBareURLRefusesAnEndlessLabelCheaply(t *testing.T) {
+	u := "a." + strings.Repeat("中", 3000)
+	if bareURL(u, testZones) {
+		t.Fatal("a label of 3000 letters is taken for a zone")
+	}
+	if allocs := testing.AllocsPerRun(10, func() { bareURL(u, testZones) }); allocs > 2 {
+		t.Fatalf("refusing it takes %.0f allocations, want the one of the split", allocs)
+	}
 }

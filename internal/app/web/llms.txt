@@ -134,7 +134,7 @@ How URLs are found and replaced:
   `https://` and the word as written, and `url` in `links` is that address.
   `file.txt`, `12.05.2026`, `v1.2` and e-mail addresses are no URLs. The
   service knows the 100 most used zones unless its operator chose more. The
-  same URL written with and without its scheme is one link.
+  same URL written with `https://` and without a scheme is one link.
 - Punctuation after a URL (`. , ; : ! ? ) ] } " '` and punctuation outside
   ASCII such as `» ” …`) is not part of the URL and stays in the text. A
   closing bracket that matches a bracket opened inside the URL, as in

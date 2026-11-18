@@ -157,7 +157,9 @@ and the URL as written.
   space, or after an opening bracket or quote, and its host ends in a domain
   zone that qisqa knows: `example.com`, `www.example.org/a?b=1`,
   `example.com:8080/x`. So `file.txt`, `12.05.2026`, `v1.2` and an e-mail
-  address stay as they are.
+  address stay as they are. So does a URL with something glued to its
+  front: a list mark (`-example.com/page`, `1.example.com/page`) or a word
+  of another alphabet.
 - `bare_url_zones` in the config says which zones qisqa knows: `top100` (the
   default), `top500` or `all`. The zones are ordered by how many of the
   million most visited sites each one holds: the first 100 hold about 95 %
@@ -165,10 +167,11 @@ and the URL as written.
 - The other rules of text mode hold. A URL that is not longer than its short
   link stays, where the length is that of the URL as written. One of the
   service's own short links is never shortened again. The same URL written
-  with and without its scheme becomes one link.
+  with `https://` and without a scheme becomes one link.
 - Where the space after a full stop is missing, two words can look like a
   host: in `he came.Biz is` the word `came.Biz` ends in the zone `biz`, and
-  is replaced if it is longer than its short link. Fewer zones make fewer
-  such cases, which is why the default is the first 100.
+  is replaced if it is longer than its short link. So is the name of a file
+  whose ending is a zone, such as `annual-report-2026.pl`. Fewer zones make
+  fewer such cases, which is why the default is the first 100.
 - With `urls`, `bare_urls` changes nothing: the list names the URLs to
   shorten, each with its scheme.

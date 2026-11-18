@@ -3,6 +3,7 @@ package app
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -24,6 +25,9 @@ var runPattern = regexp.MustCompile(`[^\s<>"]+`)
 
 // openingPunctuation may stand in front of a URL without being part of it.
 const openingPunctuation = "([{'«“‘„"
+
+// maxLabelLength is the most characters a label of a host name can have.
+const maxLabelLength = 63
 
 // trailingPunctuation is the ASCII punctuation that may follow a URL in a
 // sentence without being part of it.
@@ -127,6 +131,12 @@ func appendBareURLs(found []textURL, text string, from, to int, beforeURL bool, 
 // "12.05.2026" and a sentence that lacks the space after its full stop. An
 // "@" is no character of a label, so an e-mail address and a URL with user
 // information are not taken; in the path it is like any other character.
+//
+// What written text glues to a URL must not become part of its host: a
+// label does not start or end with a hyphen ("-example.com" in a list),
+// does not mix Latin letters with those of another script ("сайт-example"),
+// and a number is the first of three or more labels only in a list
+// ("1.example.com"). Each of these leaves the text as it is.
 func bareURL(u string, zones map[string]bool) bool {
 	host := u
 	if end := strings.IndexAny(u, "/?#"); end >= 0 {
@@ -137,6 +147,9 @@ func bareURL(u string, zones map[string]bool) bool {
 		if len(port) < 1 || len(port) > 5 || strings.Trim(port, "0123456789") != "" {
 			return false
 		}
+		if n, _ := strconv.Atoi(port); n < 1 || n > 65535 {
+			return false
+		}
 		host = host[:colon]
 	}
 	labels := strings.Split(host, ".")
@@ -144,14 +157,32 @@ func bareURL(u string, zones map[string]bool) bool {
 		return false
 	}
 	for _, label := range labels {
-		if label == "" {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
+		length, latin, other := 0, false, false
 		for _, r := range label {
-			if r != '-' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			switch {
+			case r == '-' || unicode.IsDigit(r):
+			case unicode.Is(unicode.Latin, r):
+				latin = true
+			case unicode.IsLetter(r):
+				other = true
+			default:
+				return false
+			}
+			// No label of a host name is longer, and the ASCII form of a
+			// long one takes time that grows with the square of its length.
+			if length++; length > maxLabelLength {
 				return false
 			}
 		}
+		if latin && other {
+			return false
+		}
+	}
+	if len(labels) > 2 && strings.Trim(labels[0], "0123456789") == "" {
+		return false
 	}
 	zone := labels[len(labels)-1]
 	if isASCII(zone) {

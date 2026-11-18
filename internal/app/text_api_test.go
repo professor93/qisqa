@@ -292,10 +292,24 @@ func TestTextBareURLsKeepOwnDomains(t *testing.T) {
 	s, _ := newTestServer(t)
 	_, err := s.meta.AddDomain("links.example.com", "", nil, false)
 	must(t, err)
+	// With the bare format a short link is 19 bytes, so that the first of
+	// these, 23 bytes, is not left alone for its length.
 	own := "links.example.com/aB3xK www.links.example.com/a/long/path/that/would/otherwise/be/shortened"
-	got := shortened(t, s, map[string]any{"text": own + " " + bareA, "bare_urls": true})
+	got := shortened(t, s, map[string]any{"text": own + " " + bareA, "bare_urls": true, "format": "bare"})
 	eq(t, len(got.Links), 1)
 	eq(t, got.Text, own+" "+got.Links[0].ShortURL)
+}
+
+// TestTextBareURLOutsideASCII: a URL without a scheme whose host and zone
+// have letters outside ASCII becomes a link to their ASCII form, the same
+// link as the URL written with its scheme.
+func TestTextBareURLOutsideASCII(t *testing.T) {
+	s, _ := newTestServer(t, func(c *Config) { c.BareURLZones = "all" })
+	const bare = "пример.рф/страница/длинная"
+	got := shortened(t, s, map[string]any{"text": bare + " и https://" + bare, "bare_urls": true})
+	eq(t, len(got.Links), 1)
+	eq(t, got.Links[0].URL, "https://xn--e1afmkfd.xn--p1ai/страница/длинная")
+	eq(t, got.Text, got.Links[0].ShortURL+" и "+got.Links[0].ShortURL)
 }
 
 // TestTextBareURLsSkipWhatMayNotBeShortened: as with a scheme, a URL the
